@@ -412,7 +412,10 @@ export function plan(baseSnapshot, freshSnapshot, text) {
   for (const R of lines) {
     if ((R.role !== 'broot' && R.role !== 'bfolder') || R.gone) continue;
     if (R.role === 'broot' && R.copyOf) { err(R, 'duplicate bookmark root'); continue; }
-    const rec = { key: R.key, line: R, isNew: !R.ekey, copy: !!R.copyOf, source: srcType(R.srcKey), srcKey: R.srcKey, isFolder: true, title: R.name, isRoot: R.role === 'broot', children: [] };
+    const source = srcType(R.srcKey);
+    // a group line turned into a folder drops its ` [color]` suffix: the color is group syntax, not part of the name
+    const title = source === 'group' ? splitGroupName(R.name).title : R.name;
+    const rec = { key: R.key, line: R, isNew: !R.ekey, copy: !!R.copyOf, source, srcKey: R.srcKey, isFolder: true, title, isRoot: R.role === 'broot', children: [] };
     rec.parentKey = R.parent >= 0 ? lines[R.parent].key : null;
     folderRecs.set(R.key, rec);
     if (rec.isNew) newFolders.set(R.key, { title: rec.title, parent: rec.parentKey });

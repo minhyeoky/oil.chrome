@@ -436,6 +436,17 @@ test('G23b: move a window block under the bookmark bar → window closed, folder
   });
 });
 
+test('copy a group block under a bookmark folder → new folder titled without the [color], bookmarks from its tabs, group kept', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => insertAfter(t, K.title('Read later'), reindent(block(t, K.title('Research')), 2)),
+    expected: {
+      windows: STANDARD.windows,
+      bookmarks: bm({ bar: [DEV(GITHUB, MDN), LATER({ folder: 'Research', children: [['Attention', 'attention'], ['Gpt3', 'gpt3']] })] }),
+    },
+  });
+});
+
 test('a bookmark folder dropped into another folder (move-folder)', async () => {
   await fresh();
   await scenario(h, {
