@@ -1,1 +1,124 @@
-body { margin: 0; }
+/* Page shell and overlays. Editor internals (gutter, highlighting, status line) are styled from src/editor/theme.js and marks.js. */
+
+:root {
+  --bg0h: #1d2021;
+  --bg0: #282828;
+  --bg1: #3c3836;
+  --bg2: #504945;
+  --bg3: #665c54;
+  --bg4: #7c6f64;
+  --fg: #ebdbb2;
+  --fg4: #a89984;
+  --red: #fb4934;
+  --green: #b8bb26;
+  --yellow: #fabd2f;
+  --blue: #83a598;
+  --purple: #d3869b;
+  --aqua: #8ec07c;
+  --orange: #fe8019;
+  --font: "JetBrainsMono Nerd Font", "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg0);
+  color: var(--fg);
+}
+
+#app { height: 100vh; }
+#app .cm-editor { height: 100%; }
+
+/* bottom stack: status line above the ex command line */
+.cm-panels-bottom { display: flex; flex-direction: column; }
+.oil-status { order: 1; }
+.cm-vim-panel { order: 2; }
+
+/* ── overlays ─────────────────────────────────────────────────────────── */
+.oil-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(29, 32, 33, 0.74);
+  backdrop-filter: blur(2px);
+  font-family: var(--font);
+  font-size: 13px;
+}
+
+.oil-modal {
+  width: min(780px, calc(100vw - 40px));
+  max-height: calc(100vh - 56px);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg0);
+  border: 1px solid var(--bg2);
+  border-radius: 10px;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+}
+
+.oil-m-head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  padding: 14px 18px 4px;
+}
+.oil-m-title { font-size: 15px; font-weight: 700; color: var(--fg); }
+.oil-m-subtitle { color: var(--bg4); font-size: 12px; }
+.oil-m-head-error .oil-m-title { color: var(--red); }
+.oil-m-head-warn .oil-m-title { color: var(--orange); }
+
+.oil-m-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 18px;
+  padding: 2px 18px 10px;
+  border-bottom: 1px solid var(--bg1);
+}
+.oil-m-dels { color: var(--red); font-weight: 700; }
+.oil-m-bits { color: var(--fg4); }
+
+.oil-m-body { overflow: auto; padding: 8px 18px 6px; min-height: 0; }
+.oil-m-sec { margin: 8px 0 12px; break-inside: avoid; }
+.oil-m-sechead {
+  color: var(--bg4);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  padding-bottom: 3px;
+}
+.oil-m-row { display: flex; gap: 10px; padding: 1.5px 0; line-height: 1.5; }
+.oil-m-sig { flex: none; width: 2ch; text-align: center; }
+.oil-m-txt { flex: 1; word-break: break-all; color: var(--fg); }
+.oil-m-hk { flex: none; width: 17ch; color: var(--yellow); }
+
+.oil-m-del .oil-m-sig { color: var(--red); }
+.oil-m-del .oil-m-sechead { color: var(--red); }
+.oil-m-new .oil-m-sig { color: var(--green); }
+.oil-m-move .oil-m-sig, .oil-m-order .oil-m-sig { color: var(--blue); }
+.oil-m-edit .oil-m-sig { color: var(--yellow); }
+.oil-m-warn .oil-m-sig, .oil-m-warn .oil-m-sechead { color: var(--orange); }
+
+.oil-m-help { columns: 2; column-gap: 28px; }
+.oil-m-help .oil-m-row { padding: 1px 0; }
+
+.oil-m-foot {
+  display: flex;
+  gap: 22px;
+  padding: 9px 18px 11px;
+  border-top: 1px solid var(--bg1);
+  color: var(--fg4);
+}
+.oil-m-key kbd {
+  font-family: var(--font);
+  font-size: 12px;
+  color: var(--bg0);
+  background: var(--fg4);
+  border-radius: 3px;
+  padding: 0 6px;
+  font-weight: 700;
+}

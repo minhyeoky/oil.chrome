@@ -1,4 +1,4 @@
-// plan(S, F, text) → { actions, desired, errors, warnings, marks }  (DESIGN.md §3–§5). Pure: no chrome APIs.
+// plan(S, F, text) → { actions, desired, errors, warnings, marks, roles }  (DESIGN.md §3–§5). Pure: no chrome APIs.
 //
 //  S = snapshot the buffer was rendered from (content comparisons use S)
 //  F = fresh snapshot (position comparisons use F)
@@ -21,6 +21,30 @@ const entityOf = (ix, key) => {
 
 const sameArray = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
 
+/**
+ * Role of every parsed line, from its position (DESIGN.md §3): window | group | tab | broot | bfolder | bookmark |
+ * invalid. Sets `L.akey` and `L.role`; `report(L, message)` is called for each structural error.
+ */
+export function assignRoles(lines, rootSet, report = () => {}) {
+  for (const L of lines) {
+    const P = L.parent >= 0 ? lines[L.parent] : null;
+    const isFolder = L.type === 'folder';
+    L.akey = L.anchor ? L.anchor.kind + L.anchor.id : null;
+    if (!P) {
+      if (isFolder) L.role = L.akey && L.anchor.kind === 'b' && rootSet.has(L.akey) ? 'broot' : 'window';
+      else { L.role = 'invalid'; report(L, 'top-level entry — put it under a window or a bookmark folder'); }
+    } else if (P.role === 'window') {
+      L.role = isFolder ? 'group' : 'tab';
+    } else if (P.role === 'group') {
+      if (isFolder) { L.role = 'invalid'; report(L, 'groups cannot nest'); } else L.role = 'tab';
+    } else if (P.role === 'broot' || P.role === 'bfolder') {
+      L.role = isFolder ? 'bfolder' : 'bookmark';
+    } else {
+      L.role = 'invalid'; // inside an invalid subtree: already reported on the ancestor
+    }
+  }
+}
+
 export function plan(baseSnapshot, freshSnapshot, text) {
   const S = indexSnapshot(baseSnapshot);
   const F = indexSnapshot(freshSnapshot);
@@ -40,25 +64,8 @@ export function plan(baseSnapshot, freshSnapshot, text) {
   const mark = (L, kind, text) => marks.push({ line: L.n, kind, text });
 
   // ───────────────────────── roles (DESIGN §3) ─────────────────────────
-  const akey = (L) => (L.anchor ? L.anchor.kind + L.anchor.id : null);
   const rootSet = new Set([...S.rootKeys, ...F.rootKeys]);
-  for (const L of lines) {
-    const P = L.parent >= 0 ? lines[L.parent] : null;
-    const isFolder = L.type === 'folder';
-    L.akey = akey(L);
-    if (!P) {
-      if (isFolder) L.role = L.akey && L.anchor.kind === 'b' && rootSet.has(L.akey) ? 'broot' : 'window';
-      else { L.role = 'invalid'; err(L, 'top-level entry — put it under a window or a bookmark folder'); }
-    } else if (P.role === 'window') {
-      L.role = isFolder ? 'group' : 'tab';
-    } else if (P.role === 'group') {
-      if (isFolder) { L.role = 'invalid'; err(L, 'groups cannot nest'); } else L.role = 'tab';
-    } else if (P.role === 'broot' || P.role === 'bfolder') {
-      L.role = isFolder ? 'bfolder' : 'bookmark';
-    } else {
-      L.role = 'invalid'; // inside an invalid subtree: already reported on the ancestor
-    }
-  }
+  assignRoles(lines, rootSet, err);
 
   // ───────────────────────── identity (DESIGN §4) ─────────────────────────
   const candidateKey = (L) => {
@@ -502,7 +509,9 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     ...A.close, ...A.del, ...A.removeGroup,
   ];
   marks.sort((a, b) => a.line - b.line);
-  return { actions, desired, errors, warnings, marks };
+  // per non-blank line: the role its position gives it (window group tab broot bfolder bookmark invalid), for the editor
+  const roles = lines.map((L) => ({ n: L.n, role: L.role, key: L.key ?? null, anchor: L.akey }));
+  return { actions, desired, errors, warnings, marks, roles };
 }
 
 /** Counts for the status bar: `+2 →3 ↕1 ↻1 ✎1 ✕4`. */
