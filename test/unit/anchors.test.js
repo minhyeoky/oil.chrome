@@ -167,3 +167,35 @@ test('after typing, the selection follows the (possibly relocated) insertion', (
   const out = apply(st, { changes: { from: l.from + 7, insert: 'ab' }, selection: { anchor: l.from + 9 } });
   assert.equal(out.selection.main.head, l.from + 9);
 });
+
+test('case changes over a whole line (guu / gUU) leave the anchor exactly as it was', () => {
+  const st = mk();
+  const l = st.doc.line(3);
+  const upper = l.text.toUpperCase();
+  const out = apply(st, { changes: { from: l.from, to: l.to, insert: upper } });
+  assert.equal(out.doc.line(3).text, '  /t12 OIL.NVIM HTTPS://GITHUB.COM/STEVEARC/OIL.NVIM');
+});
+
+test('a multi-line case change keeps every anchor', () => {
+  const st = mk();
+  const a = st.doc.line(2);
+  const b = st.doc.line(3);
+  const old = st.doc.sliceString(a.from, b.to);
+  const out = apply(st, { changes: { from: a.from, to: b.to, insert: old.toUpperCase() } });
+  assert.match(out.doc.line(2).text, /^ {2}\/t11 NEOVIM /);
+  assert.match(out.doc.line(3).text, /^ {2}\/t12 OIL\.NVIM /);
+});
+
+test('a same-length replacement inside the anchor is dropped (e.g. :s/t/T/)', () => {
+  const st = mk();
+  const l = st.doc.line(2);
+  const out = apply(st, { changes: { from: l.from + 3, to: l.from + 4, insert: 'T' } });
+  assert.equal(textOf(out), DOC);
+});
+
+test('a longer replacement of anchor text is refused', () => {
+  const st = mk();
+  const l = st.doc.line(2);
+  const out = apply(st, { changes: { from: l.from + 4, to: l.from + 6, insert: '123' } });
+  assert.equal(textOf(out), DOC);
+});

@@ -38,6 +38,7 @@ export const oilTheme = EditorView.theme({
   '.cm-vim-panel': { padding: '2px 12px', fontFamily: FONT, fontSize: '13px', color: C.fg, backgroundColor: C.bg0h, minHeight: '1.5em' },
   '.cm-vim-panel input': { color: C.fg, fontFamily: FONT, fontSize: '13px' },
   '.cm-vim-panel span': { fontFamily: FONT },
+  '.cm-vim-message': { color: `${C.fg4} !important`, whiteSpace: 'pre' },
   '.cm-fold': { color: C.bg4 },
   '.cm-foldPlaceholder': { display: 'none' },
 }, { dark: true });

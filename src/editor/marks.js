@@ -11,6 +11,7 @@ import { getCM } from '@replit/codemirror-vim';
 import { GROUP_COLORS, parseLine, splitGroupName } from '../core/grammar.js';
 import { parseText } from '../core/parse.js';
 import { assignRoles, plan, summaryText } from '../core/plan.js';
+import { anchorSpan } from './anchors.js';
 import { GROUP_COLOR_CSS } from './glyphs.js';
 import { C } from './theme.js';
 
@@ -279,7 +280,9 @@ function statusPanel(ctx) {
       msg.className = cls;
       const head = v.state.selection.main.head;
       const line = v.state.doc.lineAt(head);
-      pos.textContent = `${line.number}/${v.state.doc.lines}  ${head - line.from + 1}`;
+      const a = anchorSpan(line.text);
+      const col = head - line.from - (a ? a.a1 : 0) + 1; // columns are counted from the name, not from the hidden anchor
+      pos.textContent = `${line.number}/${v.state.doc.lines}  ${Math.max(col, 1)}`;
     };
     const attach = () => {
       if (attached) return;

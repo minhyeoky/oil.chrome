@@ -35,7 +35,8 @@ export async function startServer() {
     const m = /^\/p\/([\w-]+)/.exec(req.url || '');
     if (!m) { res.writeHead(404); res.end(); return; }
     const name = m[1];
-    const title = name.charAt(0).toUpperCase() + name.slice(1);
+    const q = new URL(req.url, 'http://x').searchParams.get('t'); // ?t=Custom%20Title for readable demos
+    const title = (q || name.charAt(0).toUpperCase() + name.slice(1)).replace(/[<>&]/g, '');
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<!doctype html><html><head><meta charset="utf-8"><title>${title}</title></head><body><h1>${title}</h1></body></html>`);
   });

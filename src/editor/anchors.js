@@ -27,10 +27,36 @@ export function anchorSpan(text) {
 
 // ── change protection ───────────────────────────────────────────────────────
 
+/** Same-length replacements (gu gU g~ ~ r, :s/x/y/): keep every character that is not part of a protected zone. */
+function filterSameLength(doc, fromA, toA, text) {
+  const zones = [];
+  for (let n = doc.lineAt(fromA).number, last = doc.lineAt(toA).number; n <= last; n++) {
+    const line = doc.line(n);
+    const a = anchorSpan(line.text);
+    if (a) zones.push([line.from > 0 ? line.from - 1 : line.from, line.from + a.a1]);
+  }
+  if (!zones.length) return null;
+  const old = doc.sliceString(fromA, toA);
+  const inZone = (pos) => zones.some(([s, e]) => pos >= s && pos < e);
+  const specs = [];
+  for (let i = 0; i < old.length; i++) {
+    if (old[i] === text[i] || inZone(fromA + i)) continue;
+    const prev = specs[specs.length - 1];
+    if (prev && prev.to === fromA + i) { prev.to++; prev.insert += text[i]; } else specs.push({ from: fromA + i, to: fromA + i + 1, insert: text[i] });
+  }
+  return specs;
+}
+
 /** Rewrite one change (replace [fromA,toA) by `text`) so that anchors survive. Returns specs, or null when untouched. */
 function filterChange(doc, fromA, toA, text) {
+  if (fromA < toA && text.length === toA - fromA) return filterSameLength(doc, fromA, toA, text);
   const first = doc.lineAt(fromA).number;
   const last = doc.lineAt(toA).number;
+  if (first === last && fromA < toA && text) { // a rewrite of anchor text itself is refused outright
+    const line = doc.line(first);
+    const a = anchorSpan(line.text);
+    if (a && fromA >= line.from && toA <= line.from + a.a1) return [];
+  }
   const protect = [];
   let insAt = fromA;
   let touched = false;
