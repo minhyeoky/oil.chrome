@@ -455,3 +455,18 @@ test('a new group typed in the buffer: `Name [color]/` above a tab that is then 
   assert.deepEqual((await state()).windows[0], ['neovim', 'oil', RESEARCH('attention', 'gpt3'), { group: 'Later', color: 'green', tabs: ['hn'] }]);
   await closeEditor();
 });
+
+test('when undo makes the buffer clean again, a pending Chrome change is picked up', async () => {
+  await seedAndOpen();
+  await goto('Hn');
+  await keys('dd');
+  await h.call(async ({ url }) => {
+    const w = (await chrome.windows.getAll({ populate: true })).filter((x) => x.type === 'normal').sort((a, b) => a.id - b.id)[1];
+    await chrome.tabs.create({ windowId: w.id, url, active: false });
+  }, { url: h.url('external3') });
+  await page.waitForFunction(() => window.oil.app.stale, null, { timeout: 8000 });
+  await keys('u');
+  await page.waitForFunction(() => /External3/.test(window.oil.text()) && !window.oil.app.stale, null, { timeout: 8000 });
+  assert.ok(!(await page.evaluate(() => window.oil.isDirty())));
+  await closeEditor();
+});

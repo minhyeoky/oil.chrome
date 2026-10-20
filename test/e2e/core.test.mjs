@@ -496,3 +496,16 @@ test('deletions are journaled in chrome.storage.local before they happen (folder
   assert.equal(dev.title, 'Dev');
   assert.deepEqual(dev.children.map((c) => [c.title, c.url.split('/').pop()]), [['GitHub', 'github'], ['MDN', 'mdn']]);
 });
+
+test('a group whose members all leave but is refilled by other tabs is recreated with its title and color', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => {
+      // Research keeps its line but loses attention/gpt3 (they stay in the window, ungrouped) and takes oil + hn instead
+      let x = del(del(del(del(t, K('attention')), K('gpt3')), K('oil')), K('hn'));
+      x = insertAfter(x, K.title('Research'), [`    ${lineOf(t, K('oil')).trim()}`, `    ${lineOf(t, K('hn')).trim()}`]);
+      return insertAfter(x, K.win(1), [`  ${lineOf(t, K('attention')).trim()}`, `  ${lineOf(t, K('gpt3')).trim()}`]);
+    },
+    expected: { windows: [['attention', 'gpt3', 'neovim', RESEARCH('oil', 'hn')], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+});

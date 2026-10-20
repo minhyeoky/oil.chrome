@@ -33,6 +33,7 @@ const ctx = {
   getSnapshot: () => app.snapshot,
   getIndex: () => app.ix,
   getStatus: () => ({ dirty: isDirty(), stale: app.stale, message: app.message }),
+  onPlanError: (e) => flash(`preview failed: ${e && e.message ? e.message : e}`, 'error', 6000),
 };
 
 function flash(text, kind = 'info', ms = 5000) {
@@ -57,6 +58,8 @@ const extensions = [
   oilTheme,
   ...anchorExtensions(),
   ...marksExtensions(ctx),
+  // the buffer became clean again (undo) while Chrome had changed: catch up
+  EditorView.updateListener.of((u) => { if (u.docChanged && app.stale && !isDirty()) onChromeEvent(); }),
 ];
 
 /** The line to rest on when the editor opens: the active tab of the last focused window. */

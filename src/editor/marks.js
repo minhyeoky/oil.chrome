@@ -129,7 +129,13 @@ function computePreview(view, ctx) {
   const text = view.state.doc.toString();
   const snapshot = ctx.getSnapshot();
   if (!snapshot) return { decos: Decoration.none, plan: null, summary: '', errors: 0, warnings: 0 };
-  const p = plan(snapshot, snapshot, text);
+  let p;
+  try {
+    p = plan(snapshot, snapshot, text);
+  } catch (e) {
+    ctx.onPlanError?.(e);
+    return { decos: Decoration.none, plan: null, summary: '', errors: 0, warnings: 0 };
+  }
   const { lines } = parseText(text);
   const ix = ctx.getIndex();
   assignRoles(lines, new Set(ix ? ix.rootKeys : []));

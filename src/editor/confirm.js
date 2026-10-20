@@ -91,6 +91,12 @@ export function showConfirm(plan) {
         row.appendChild(el('span', 'oil-m-txt', m ? m[2] : a.label));
         sec.appendChild(row);
       }
+      if (g.id === 'del' && rows.some((a) => a.kind === 'delete-bookmark' || a.kind === 'delete-folder')) {
+        const note = el('div', 'oil-m-row oil-m-note');
+        note.appendChild(el('span', 'oil-m-sig', '⚠'));
+        note.appendChild(el('span', 'oil-m-txt', 'bookmark deletions sync to every signed-in device and Chrome has no undo (journaled locally)'));
+        sec.appendChild(note);
+      }
       body.appendChild(sec);
     }
     if (warnings.length) {
@@ -127,7 +133,7 @@ export function showNotice({ title, kind = 'error', lines = [], footer = 'q clos
     const head = el('div', `oil-m-head oil-m-head-${kind}`);
     head.appendChild(el('span', 'oil-m-title', title));
     modal.appendChild(head);
-    const body = el('div', 'oil-m-body');
+    const body = el('div', `oil-m-body oil-m-notice oil-m-notice-${kind}`);
     for (const l of lines) {
       const row = el('div', 'oil-m-row');
       row.appendChild(el('span', 'oil-m-sig', l.sig ?? (kind === 'error' ? '✗' : '⚠')));
@@ -144,22 +150,21 @@ export function showNotice({ title, kind = 'error', lines = [], footer = 'q clos
 
 const HELP = [
   ['Write', [
-    [':w', 'review the changes, then apply (y / n)'],
+    [':w', 'review every action, then y to apply (n cancels)'],
     [':wq  :x', 'apply, then close'],
-    [':q  q', 'close (refused when modified, :q! forces)'],
-    [':e!  R', 'reload from Chrome and discard edits'],
-    ['<CR>', 'tab: switch to it · bookmark: open in a new tab'],
-    ['', 'a modified buffer is kept open'],
+    [':q  q', 'close — refused when modified, :q! forces'],
+    [':e!  R', 'reload from Chrome and discard the edits'],
+    ['<CR>', 'tab: switch to it · bookmark: open it (a modified buffer stays open)'],
     ['za zc zo zR zM', 'folds'],
     ['g?', 'this help'],
   ]],
   ['Editing', [
-    ['dd', 'close a tab · delete a bookmark or folder block'],
-    ['yy p P ]p', 'copy, paste, paste at the current indent'],
+    ['dd', 'close a tab · delete a bookmark, or a folder with its block'],
+    ['yy p P ]p', 'copy · paste below / above · paste at the current indent'],
     ['>> <<', 'change the parent: window · group · folder'],
     ['cc cw S C', 'rename — the hidden anchor keeps the identity'],
-    ['o  O', 'new line: a URL opens a tab or adds a bookmark'],
-    ['name/', 'a folder-looking line is a new window, group or folder'],
+    ['o  O', 'new line; a typed URL becomes a tab or a bookmark'],
+    ['name/', 'a new window, group or folder, by position'],
     ['name [blue]/', 'a tab group (grey blue red yellow green pink purple cyan orange)'],
   ]],
   ['Marks', [
@@ -188,16 +193,10 @@ export function showHelp() {
       }
       body.appendChild(sec);
     }
-    const warn = el('div', 'oil-m-sec oil-m-warn');
-    warn.appendChild(el('div', 'oil-m-sechead', 'Careful'));
-    const row = el('div', 'oil-m-row');
-    row.appendChild(el('span', 'oil-m-sig', '⚠'));
-    row.appendChild(el('span', 'oil-m-txt', 'bookmark deletions sync to every signed-in device and Chrome has no undo — a journal of the last 20 deletions is kept in extension storage.'));
-    warn.appendChild(row);
-    body.appendChild(warn);
     modal.appendChild(body);
     const foot = el('div', 'oil-m-foot');
     foot.appendChild(el('span', 'oil-m-key', 'q close'));
+    foot.appendChild(el('span', 'oil-m-foot-warn', '⚠ bookmark deletions sync to every device · no undo · journal of the last 20 writes'));
     modal.appendChild(foot);
     return body;
   }, (e, close) => { if (['q', 'Escape', 'Enter', '?'].includes(e.key)) close(); });

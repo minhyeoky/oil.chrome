@@ -33,7 +33,12 @@ console.log('');
 console.log('oil.chrome demo is running.');
 console.log('  open the editor again: Alt+Shift+O (Option+Shift+O on macOS) or the toolbar button');
 console.log('  try: dd (close a tab) · p (paste it elsewhere) · >> (indent: join a group) · :w (review + apply, y) · g? (help)');
-console.log('  close the browser window to end the demo.');
+console.log('  close every window (or Cmd+Q / Ctrl+C here) to end the demo; the throwaway profile is deleted on exit.');
+
+// the demo is over when the last window is gone (macOS keeps the browser process alive without windows)
+const watch = (page) => page.on('close', () => setTimeout(() => { if (context.pages().length === 0) shutdown(); }, 600));
+context.pages().forEach(watch);
+context.on('page', watch);
 
 await new Promise((resolve) => context.on('close', resolve));
 await cleanup();

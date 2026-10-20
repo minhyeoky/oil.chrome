@@ -93,8 +93,10 @@ html, body {
 }
 .oil-m-row { display: flex; gap: 10px; padding: 1.5px 0; line-height: 1.5; }
 .oil-m-sig { flex: none; width: 2ch; text-align: center; }
-.oil-m-txt { flex: 1; word-break: break-all; color: var(--fg); }
-.oil-m-hk { flex: none; width: 17ch; color: var(--yellow); }
+.oil-m-txt { flex: 1; overflow-wrap: anywhere; color: var(--fg); }
+.oil-m-hk { flex: none; width: 16ch; color: var(--yellow); }
+.oil-m-notice-error .oil-m-sig { color: var(--red); }
+.oil-m-notice-warn .oil-m-sig { color: var(--orange); }
 
 .oil-m-del .oil-m-sig { color: var(--red); }
 .oil-m-del .oil-m-sechead { color: var(--red); }
@@ -103,8 +105,8 @@ html, body {
 .oil-m-edit .oil-m-sig { color: var(--yellow); }
 .oil-m-warn .oil-m-sig, .oil-m-warn .oil-m-sechead { color: var(--orange); }
 
-.oil-m-help { columns: 2; column-gap: 28px; }
 .oil-m-help .oil-m-row { padding: 1px 0; }
+.oil-modal:has(.oil-m-help) { width: min(760px, calc(100vw - 40px)); }
 
 .oil-m-foot {
   display: flex;
@@ -122,3 +124,7 @@ html, body {
   padding: 0 6px;
   font-weight: 700;
 }
+
+.oil-m-foot-warn { margin-left: auto; color: var(--orange); font-size: 12px; }
+.oil-m-note .oil-m-sig { color: var(--orange); }
+.oil-m-note .oil-m-txt { color: var(--orange); font-size: 12px; }

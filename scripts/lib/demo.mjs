@@ -56,7 +56,7 @@ export const SEED = {
 };
 
 /** Create the demo windows/groups/bookmarks. `layout` positions the two windows (headed demo only). */
-export async function seedDemo(call, { layout = null, waitMs = 30000 } = {}) {
+export async function seedDemo(call, { layout = null, waitMs = 30000, seed = SEED } = {}) {
   await call(async ({ seed, layout, waitMs }) => {
     const mkWindow = async (items, bounds) => {
       const flat = [];
@@ -64,7 +64,12 @@ export async function seedDemo(call, { layout = null, waitMs = 30000 } = {}) {
         if (it.group) for (const u of it.urls) flat.push({ url: u, group: it });
         else flat.push(it);
       }
-      const w = await chrome.windows.create({ url: flat[0].url, focused: false, ...(bounds || {}) });
+      let w;
+      try {
+        w = await chrome.windows.create({ url: flat[0].url, focused: false, ...(bounds || {}) });
+      } catch {
+        w = await chrome.windows.create({ url: flat[0].url, focused: false }); // bounds off the screen: let Chrome place it
+      }
       const ids = [w.tabs[0].id];
       for (const f of flat.slice(1)) ids.push((await chrome.tabs.create({ windowId: w.id, url: f.url, active: false })).id);
       for (let i = 0; i < flat.length; i++) if (flat[i].pinned) await chrome.tabs.update(ids[i], { pinned: true });
@@ -101,5 +106,5 @@ export async function seedDemo(call, { layout = null, waitMs = 30000 } = {}) {
       await new Promise((r) => setTimeout(r, 250));
     }
     await chrome.windows.update(one.w.id, { focused: true });
-  }, { seed: SEED, layout, waitMs });
+  }, { seed, layout, waitMs });
 }
