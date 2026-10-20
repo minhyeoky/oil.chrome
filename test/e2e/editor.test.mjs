@@ -486,3 +486,29 @@ test('Tab and Shift-Tab indent / dedent the line instead of leaving the editor',
   assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('cm-content')), true, 'focus stayed in the editor');
   await closeEditor();
 });
+
+test('opening the editor again focuses the existing window instead of opening a second one', async () => {
+  await seedAndOpen();
+  let extra = 0;
+  h.context.on('page', () => { extra += 1; });
+  const id1 = await h.call(() => oilOpenEditor());
+  const id2 = await h.call(() => oilOpenEditor());
+  await sleep(300);
+  assert.equal(id1, id2, 'same window id');
+  assert.equal(extra, 0, 'no new page opened');
+  const popups = await h.call(async () => (await chrome.windows.getAll({ populate: true })).filter((w) => w.type === 'popup' && w.tabs.some((t) => /editor\.html/.test(t.url || ''))).length);
+  assert.equal(popups, 1);
+  await closeEditor();
+});
+
+test('the editor is a popup window and never lists itself', async () => {
+  await seedAndOpen();
+  const info = await h.call(async () => {
+    const w = (await chrome.windows.getAll({ populate: true })).find((x) => x.tabs.some((t) => /editor\.html/.test(t.url || '')));
+    return { type: w.type, width: w.width, height: w.height };
+  });
+  assert.equal(info.type, 'popup');
+  assert.ok(info.width > 0 && info.height > 0);
+  assert.ok(!/editor\.html/.test(await text()), 'the outline never contains the editor URL');
+  await closeEditor();
+});
