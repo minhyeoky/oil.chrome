@@ -121,6 +121,8 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
 - **내용 변경은 S 기준**이다 — 줄의 URL이 S와 같으면, F에서 바뀌었어도 건드리지 않는다(밖에서 navigate한 걸 되돌리지 않는다).
   - 줄이 폴더인지도 S로 가른다 — `/` 없는 줄은 앵커가 S의 창·그룹·북마크 폴더일 때만 폴더다(§2).
 - **위치 변경은 F 기준**이다 — 지금 실제 위치와 desired를 비교한다.
+  - 지우기도 F 기준이다 — `removeTree`는 지금 트리에 걸린다. 지울 폴더에 합쳐지는 것은 F에서 그 폴더 안에 든 지울 엔티티다.
+  - F에서 지울 폴더 안에 없는 지울 엔티티는 S에서 그 안이었어도 자기 `delete-bookmark`·`delete-folder`를 갖는다. 밖에서 옮겨 넣은 북마크는 제 줄도 지웠으면 폴더와 함께 지워지고, 줄이 남아 있으면 먼저 그 자리로 옮긴다.
 - F에만 있는 엔티티(편집 중 밖에서 생긴 것)는 버퍼에 없으니 절대 닫지 않는다.
 - S에 있고 F에 없는 엔티티(밖에서 닫힘):
   - 제거 대상이면 조용히 건너뛴다.
@@ -144,7 +146,7 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
 | navigate-tab | `↻ tab <old> → <new url>` | `tabs.update({url})` |
 | edit-bookmark / edit-folder / edit-group | `✎ ...` | `bookmarks.update` / `tabGroups.update` |
 | close-tab | `✕ tab <title>` | `tabs.remove` |
-| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, 하위는 한 줄로 합친다 — n은 함께 지워지는 북마크) |
+| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, F에서 그 안에 든 하위는 한 줄로 합친다 — n은 함께 지워지는 북마크) |
 | remove-group | `✕ group <title> (ungroup)` | 표시 전용 — 멤버 이동이 실행을 진다 |
 
 경고(적용은 함): 탭 제목 수정(`title is read-only`), 핀 탭을 비핀 뒤로 보냄(`pinned tabs stay first`), 그룹 안의 핀 탭(`pinned tabs can't be grouped` — 그룹 밖에 둔다), 사라진 엔티티 줄.
@@ -171,7 +173,7 @@ desired 구조(창별 탭 순서·그룹 멤버십, 폴더별 자식 순서)를 
 3. **갱신**: navigate, 북마크 제목·URL, 그룹 제목·색.
 4. **지우기**: 1–3에서 오류가 하나라도 났으면 **통째로 건너뛴다**(옮겨 담기 실패 후 원본이 지워지는 손실을 막는다).
    - 지우기 직전, 지울 북마크 하위 트리와 닫을 탭(URL·제목)을 `chrome.storage.local` journal에 남긴다(최근 20회).
-   - `removeTree` 직전 하위 트리를 다시 읽는다. plan이 못 본 북마크가 들어 있으면 그 폴더 삭제를 거부한다.
+   - `removeTree` 직전 하위 트리를 다시 읽는다. plan이 함께 지운다고 센 것(`known`) 밖의 북마크가 들어 있으면 그 폴더 삭제를 거부한다.
 5. **보고**: 성공 수·오류·경고·검증 불일치를 돌려주고, 편집기는 live 상태로 다시 렌더한다(undo 히스토리 초기화, vim 레지스터는 유지).
 
 ## 7. 편집기
@@ -270,7 +272,6 @@ scripts/record.mjs       스크립트 데모 → demo/demo.gif
 
 ### 알려진 결함 (프로토타입, 미수정)
 
-- 편집 중 바깥에서, 지울 폴더 밖으로 옮긴 북마크는 지워지지 않고 남는다 — 무엇을 지울지는 S의 트리로 정하고 `removeTree`는 지금 트리에 건다.
 - 앞 단계가 비운 창이 닫혀 뒤 단계가 "No window with id"로 실패한다. 창 두 개의 탭을 서로 맞바꿀 때, 또는 한 탭짜리 창의 탭으로 새 창을 만들면서 그 창에 새 탭도 넣을 때 난다. 이때 지우기는 건너뛴다.
 - 목록 밖의 핀 탭(닫을 탭·밖에서 핀한 탭)이 있으면 절대 인덱스 배치가 밀려 불일치 경고가 뜬다.
 - 지우기를 건너뛰어도, 닫으려고 미리 그룹에서 뺀 탭은 그룹 밖에 남는다.
