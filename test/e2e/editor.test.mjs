@@ -51,6 +51,9 @@ async function write(answer = 'y') {
   await press(answer);
   await page.waitForSelector('.oil-modal', { state: 'detached' });
   await idle();
+  // the buffer was re-rendered from live state: planning it again must give nothing (E-idem), and no problem modal opened
+  assert.deepEqual(await page.evaluate(() => window.oil.plan().actions), [], 're-render → plan must be empty');
+  assert.equal(await page.locator('.oil-modal').count(), 0, 'no "applied with problems" notice');
 }
 async function seedAndOpen(spec = STANDARD) { await h.seed(spec); await openEditor(); }
 const state = () => h.settledState();
