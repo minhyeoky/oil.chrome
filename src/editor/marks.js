@@ -311,7 +311,8 @@ const marksTheme = EditorView.theme({
     textIndent: 'calc(-1 * (var(--n) + var(--w)) * 1ch)',
   },
   '.oil-anchor': { display: 'inline-flex', width: '2ch', height: '1.2em', alignItems: 'center', justifyContent: 'center', verticalAlign: 'text-bottom', textIndent: '0' },
-  '.oil-anchor img': { width: '14px', height: '14px', borderRadius: '3px', display: 'block' },
+  // a light chip behind favicons: dark glyphs (GitHub's octocat) would vanish on the dark background
+  '.oil-anchor img': { width: '14px', height: '14px', padding: '1px', boxSizing: 'content-box', borderRadius: '3.5px', display: 'block', background: 'rgba(213, 196, 161, 0.94)' },
   '.oil-anchor svg': { width: '14px', height: '14px', display: 'block' },
   '.oil-a-window': { color: C.yellow },
   '.oil-a-root': { color: C.orange },

@@ -482,3 +482,17 @@ test('external change between render and :w: gone entities are skipped, F-only t
   const st = await h.settledState();
   assert.deepEqual(st.windows, [['neovim', 'oil', RESEARCH('attention', 'gpt3')], ['tmux', 'outside']]);
 });
+
+test('deletions are journaled in chrome.storage.local before they happen (folder subtree + closed tab)', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => del(delBlock(t, K.title('Dev')), K('hn')),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3')], ['tmux', 'codemirror']], bookmarks: bm({ bar: [LATER()] }) },
+  });
+  const journal = await h.call(async () => (await chrome.storage.local.get('journal')).journal);
+  assert.equal(journal.length, 1);
+  assert.deepEqual(journal[0].tabs.map((t) => t.title), ['Hn']);
+  const dev = journal[0].bookmarks[0];
+  assert.equal(dev.title, 'Dev');
+  assert.deepEqual(dev.children.map((c) => [c.title, c.url.split('/').pop()]), [['GitHub', 'github'], ['MDN', 'mdn']]);
+});

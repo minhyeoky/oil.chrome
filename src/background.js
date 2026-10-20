@@ -31,7 +31,15 @@ export async function openEditor() {
     opts.left = Math.max(0, Math.round(anchor.left + (anchor.width - WIDTH) / 2));
     opts.top = Math.max(0, Math.round(anchor.top + (anchor.height - HEIGHT) / 2));
   }
-  const win = await chrome.windows.create(opts);
+  let win;
+  try {
+    win = await chrome.windows.create(opts);
+  } catch {
+    // bounds that fall (mostly) off the visible screen are rejected: let Chrome place the window itself
+    delete opts.left;
+    delete opts.top;
+    win = await chrome.windows.create(opts);
+  }
   return win.id;
 }
 
