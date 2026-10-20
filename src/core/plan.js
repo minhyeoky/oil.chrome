@@ -499,7 +499,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     // bookmarks added outside while editing would be wiped by removeTree
     const fWalk = (fk) => (F.bm.get(fk)?.childKeys ?? []).some((ck) => !S.bm.has(ck) || (F.bm.get(ck).isFolder && fWalk(ck)));
     if (fWalk(k)) err(null, `folder "${b.title}" got new contents outside — :e! to reload`);
-    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
+    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
   }
 
   const actions = [

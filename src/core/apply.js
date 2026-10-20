@@ -266,7 +266,18 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     } else {
       const entry = { ts: Date.now(), tabs: closes.map((a) => ({ url: a.url, title: a.title })), bookmarks: [] };
       for (const a of deletes) {
-        try { entry.bookmarks.push(...(await api.bookmarks.getSubTree(idOf(a.key)))); } catch (e) { fail('journal', e); }
+        try {
+          const sub = await api.bookmarks.getSubTree(idOf(a.key));
+          entry.bookmarks.push(...sub);
+          if (a.kind === 'delete-folder' && a.known) {
+            // removeTree takes everything inside: refuse when something was added since the plan (e.g. while the
+            // confirmation was open) — the plan only guards what it saw
+            const extra = [];
+            const walk = (n) => { if (!a.known.includes(`b${n.id}`)) extra.push(n.title || n.url || n.id); (n.children || []).forEach(walk); };
+            sub.forEach(walk);
+            if (extra.length) fail(`delete ${a.title}`, `the folder now holds bookmarks added outside (${extra.join(', ')}); nothing was deleted`);
+          }
+        } catch (e) { fail('journal', e); }
       }
       let journaled = report.errors.length === 0;
       if (journaled) {

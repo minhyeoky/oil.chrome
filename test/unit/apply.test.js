@@ -91,3 +91,14 @@ test('a failed journal write also skips the deletions', async () => {
   assert.equal(report.skippedDeletes, true);
   assert.ok(!api.calls.includes('tabs.remove'));
 });
+
+test('a folder that gained a bookmark after the plan is not removed (removeTree would take it along)', async () => {
+  const p = planFor(delBlock(EXAMPLE, 'b10'));
+  const api = fakeApi();
+  api.bookmarks.getSubTree = async (id) => [{ id, title: 'Dev', children: [{ id: '11', title: 'GitHub', url: 'https://github.com/' }, { id: '999', title: 'Added meanwhile', url: 'https://late.test/' }] }];
+  const report = await apply(api, p);
+  assert.equal(report.skippedDeletes, true);
+  assert.ok(report.errors.some((e) => /added outside \(Added meanwhile\)/.test(e.message)));
+  assert.ok(!api.calls.includes('bookmarks.removeTree'));
+  assert.equal(api.store.journal, undefined, 'nothing journaled for a deletion that did not happen');
+});

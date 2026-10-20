@@ -83,8 +83,9 @@ function filterChange(doc, fromA, toA, text) {
       protect.push([s, a1]);
       touched = true;
       if (text && fromA < a1) insAt = Math.max(insAt, a1);
-    } else if (lf > 0 && fromA < lf && toA >= lf && fromA > doc.lineAt(lf - 1).from) {
-      // would glue this line onto what is left of the previous one (J); removing the previous line whole is fine
+    } else if (lf > 0 && fromA < lf && toA >= lf && fromA > doc.lineAt(fromA).from) {
+      // would glue this line onto what is left of the line the deletion starts in (J, or a charwise delete across
+      // whole lines); a deletion that starts at a line start leaves nothing to glue onto
       protect.push([lf - 1, lf]);
       touched = true;
     }

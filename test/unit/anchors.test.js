@@ -199,3 +199,14 @@ test('a longer replacement of anchor text is refused', () => {
   const out = apply(st, { changes: { from: l.from + 4, to: l.from + 6, insert: '123' } });
   assert.equal(textOf(out), DOC);
 });
+
+test('a charwise deletion from mid-line across whole lines into an anchored line does not glue it behind the prefix', () => {
+  const st = mk();
+  const l2 = st.doc.line(2);
+  const l4 = st.doc.line(4);
+  const out = apply(st, { changes: { from: l2.from + 7, to: l4.from + 1 } });
+  const lines = textOf(out).split('\n');
+  assert.ok(lines.some((x) => /^\s*\/t13 /.test(x)), 'the t13 line is untouched');
+  assert.ok(!lines.some((x) => /\S\s+\/t\d+ /.test(x.replace(/^\s*\/t\d+ /, ''))), 'no anchor ends up in the middle of a line');
+  assert.ok(lines[1].startsWith('  /t11 '), 'the first line keeps its anchor');
+});
