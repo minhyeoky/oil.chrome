@@ -12,7 +12,7 @@ let pageErrors = [];
 before(async () => { h = await launch({ name: 'editor' }); });
 after(async () => { await h.close(); });
 afterEach(async () => {
-  if (page && !page.isClosed()) await h.call(async () => { for (const w of await chrome.windows.getAll()) if (w.type === 'popup' && w.tabs === undefined) { /* keeper */ } });
+  if (page && !page.isClosed()) await page.close(); // a failed test can leave its editor open, and the next one would only focus it
   assert.deepEqual(pageErrors, [], 'no uncaught errors in the editor page');
 });
 
