@@ -450,3 +450,12 @@ test('the journal stores the live URL and title of a tab that changed since the 
   await apply(blind, p);
   assert.deepEqual(blind.store.journal[0].tabs, [{ url: 'https://b.test/', title: 'B' }]);
 });
+
+test('a bookmark folder removed outside before the write is a reported error, not a throw: deletes are skipped', async () => {
+  const p = planFor(del(EXAMPLE, 't15'));
+  const api = fakeApi({ failOn: ['bookmarks.getChildren'] });
+  const report = await apply(api, p);
+  assert.ok(report.errors.some((e) => e.op === 'move bookmark' && /getChildren failed/.test(e.message)));
+  assert.equal(report.skippedDeletes, true);
+  assert.ok(!api.calls.includes('tabs.remove'));
+});

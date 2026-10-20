@@ -232,7 +232,8 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
   // placed next to them join the group (tabs.move into the interior of a group joins it). They go back at the end
   // when the deletes are skipped.
   const ungroupedToClose = new Map(); // tab id → the group it was taken out of
-  {
+  let tabProblems = [];
+  try {
     const closing = actions.filter((a) => a.kind === 'close-tab').map((a) => idOf(a.key));
     if (closing.length) {
       const all = await readTabs();
@@ -241,10 +242,6 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
         for (const id of grouped) ungroupedToClose.set(id, all.get(id).groupId);
       }
     }
-  }
-
-  let tabProblems = [];
-  try {
     for (let pass = 1; pass <= MAX_PASSES; pass++) {
       tabProblems = [];
       for (const Wd of desired.windows) await reconcileWindow(Wd, tabProblems);
@@ -264,13 +261,15 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
       const parentId = idOf(f.key);
       if (parentId === undefined) continue;
       const kids = f.children.map(idOf).filter((x) => x !== undefined);
-      let live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id);
-      for (let i = 0; i < kids.length; i++) {
-        if (live[i] === kids[i]) continue;
-        const r = await step('move bookmark', () => api.bookmarks.move(kids[i], { parentId, index: i }));
-        if (!r.ok) { failed.push([f, i]); }
-        live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id);
-      }
+      try {
+        let live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id);
+        for (let i = 0; i < kids.length; i++) {
+          if (live[i] === kids[i]) continue;
+          const r = await step('move bookmark', () => api.bookmarks.move(kids[i], { parentId, index: i }));
+          if (!r.ok) { failed.push([f, i]); }
+          live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id);
+        }
+      } catch (e) { fail('move bookmark', e); failed.push([f, -1]); } // the folder was removed outside meanwhile
     }
     return failed;
   }
@@ -285,7 +284,11 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     const parentId = idOf(f.key);
     if (parentId === undefined) continue;
     const kids = f.children.map(idOf).filter((x) => x !== undefined);
-    const live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id).filter((id) => kids.includes(id));
+    let live;
+    try { live = (await api.bookmarks.getChildren(parentId)).map((c) => c.id).filter((id) => kids.includes(id)); } catch {
+      bookmarkProblems.push(`folder ${f.key} is gone`);
+      continue;
+    }
     if (!sameArray(live, kids)) bookmarkProblems.push(`order of ${f.key}: wanted ${kids.join(',')} got ${live.join(',')}`);
   }
 
