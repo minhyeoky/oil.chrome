@@ -193,6 +193,17 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     }
   }
 
+  // Tabs about to be closed are taken out of their groups first: left inside a span they would make every tab
+  // placed next to them join the group (tabs.move into the interior of a group joins it).
+  {
+    const closing = actions.filter((a) => a.kind === 'close-tab').map((a) => idOf(a.key));
+    if (closing.length) {
+      const all = await readTabs();
+      const grouped = closing.filter((id) => all.get(id) && all.get(id).groupId !== -1);
+      if (grouped.length) await step('ungroup tabs to close', () => api.tabs.ungroup(grouped));
+    }
+  }
+
   let tabProblems = [];
   for (let pass = 1; pass <= MAX_PASSES; pass++) {
     tabProblems = [];
