@@ -94,6 +94,10 @@ npm run demo      # headed demo with real pages — Playwright Chromium, throwaw
 npm run record    # headless scripted run → demo/demo.gif, demo/demo.mp4, demo/frames/ (needs ffmpeg)
 ```
 
+`npm run e2e` also runs two randomised suites: a buffer→Chrome fuzz (`FUZZ_N=250`, replay one with `FUZZ_SEED=<n>`) and a
+key fuzz that types random vim operations into the editor and checks that no anchor is damaged
+(`ANCHOR_FUZZ_N=3000`, `ANCHOR_FUZZ_SEED=<n>`).
+
 Layout: `src/core/` is the engine (pure: `render`, `parse`, `plan`; chrome-facing: `snapshot`, `apply`),
 `src/editor/` the CodeMirror 6 + `@replit/codemirror-vim` frontend, `test/unit/` and `test/e2e/` the tests.
 The design is in [`DESIGN.md`](DESIGN.md).
