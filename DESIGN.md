@@ -250,7 +250,7 @@ scripts/record.mjs       스크립트 데모 → demo/demo.gif
 - 북마크 삭제는 sync로 모든 기기에 퍼지고 크롬엔 undo API가 없다 — journal만 남긴다. 복원 명령은 다음 단계.
 - 저장된 탭 그룹: API로 그룹을 풀거나 마지막 탭을 닫으면 저장본까지 지워지고, 그 삭제가 sync된다는 보고가 있다(단일 출처, Chrome 148). 그룹 줄 삭제(G12)가 이 경로를 탄다.
 - 계정/로컬 북마크 분리(Chrome 134+ `folderType`·`syncing`)로 루트에 "Bookmarks bar"가 둘 뜰 수 있다. 지금 렌더는 이름만 보여서 둘이 구분되지 않는다.
-- 브랜드 Chrome은 `--load-extension`(137+)·`--disable-extensions-except`(139+)를 무시한다. 데모·테스트는 Chrome for Testing(Playwright)으로 하고, 사람 Chrome에는 `chrome://extensions` → 압축해제 로드로만 들어간다.
+- 브랜드 Chrome은 `--load-extension`(137+)·`--disable-extensions-except`(139+)를 무시한다. 데모·테스트는 Chrome for Testing(Playwright)으로 하고, 평소 쓰는 Chrome에는 `chrome://extensions` → 압축해제 로드로만 들어간다.
 - 창 이름 API는 없다. 창 이름, 탭 제목 수정, 탭 음소거·핀 토글, 읽기 목록·최근 닫은 탭 뷰는 범위 밖.
 
 ### 알려진 결함 (프로토타입, 미수정)

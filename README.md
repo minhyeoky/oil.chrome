@@ -2,7 +2,7 @@
 
 Edit Chrome's windows, tab groups, tabs and bookmarks as **one indented outline** in a vim buffer.
 Move, copy, rename, regroup and delete with the keys you already know, then `:w` to review and apply.
-Same model as [oil.nvim](https://github.com/stevearc/oil.nvim) and tmux-oil.nvim: the buffer is the desired state,
+Same model as [oil.nvim](https://github.com/stevearc/oil.nvim) and [tmux-oil.nvim](https://github.com/minhyeoky/tmux-oil.nvim): the buffer is the desired state,
 identity lives in hidden per-line anchors, and there are no heuristics.
 
 ![demo](demo/demo.gif)
@@ -100,10 +100,22 @@ key fuzz that types random vim operations into the editor and checks that no anc
 
 Layout: `src/core/` is the engine (pure: `render`, `parse`, `plan`; chrome-facing: `snapshot`, `apply`),
 `src/editor/` the CodeMirror 6 + `@replit/codemirror-vim` frontend, `test/unit/` and `test/e2e/` the tests.
-The design is in [`DESIGN.md`](DESIGN.md).
+The design notes, including the known defects, are in [`DESIGN.md`](DESIGN.md) (Korean).
 
 ## Known limits
 
 Window names, tab titles, mute/pin toggles, the reading list and recently closed tabs are out of scope. Incognito windows
 are not listed (extensions are off there by default). Saved tab groups and the account/local bookmark split of recent
 Chrome versions are not modelled.
+
+## Related
+
+- [oil.nvim](https://github.com/stevearc/oil.nvim): the file system version of this idea, and the inspiration.
+- [tmux-oil.nvim](https://github.com/minhyeoky/tmux-oil.nvim): the same model for tmux sessions and windows.
+- [oil.tabs](https://github.com/hamzahshahbazkhan/oil.tabs): the same idea for tabs and windows, also CodeMirror + vim.
+- [brotab](https://github.com/balta2ar/brotab): tab control from the command line; `bt move` edits the tab list in `$EDITOR`.
+- [TabFS](https://github.com/osnr/TabFS): browser tabs mounted as a filesystem.
+
+## License
+
+[MIT](LICENSE)
