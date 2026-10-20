@@ -12,7 +12,7 @@ globalThis.T = {
   base: null,
   names: new Map(),
   async win(n) { const w = await chrome.windows.create({ url: T.base + '/' + n, focused: false }); T.names.set(w.tabs[0].id, n); return w; },
-  async tab(wid, n) { const t = await chrome.tabs.create({ windowId: wid, url: T.base + '/' + n, active: false }); T.names.set(t.id, n); return t.id; },
+  async tab(wid, n, extra = {}) { const t = await chrome.tabs.create({ windowId: wid, url: T.base + '/' + n, active: false, ...extra }); T.names.set(t.id, n); return t.id; },
   async wait() { for (let i = 0; i < 100; i++) { if ((await chrome.tabs.query({})).every((t) => t.status === 'complete')) return; await new Promise((r) => setTimeout(r, 30)); } },
   async layout(wid) {
     const tabs = (await chrome.tabs.query({ windowId: wid })).sort((a, b) => a.index - b.index);
@@ -195,6 +195,92 @@ test('OBSERVED windows.create({tabId}) takes the tab out of its group; moving a 
     return o;
   });
   assert.deepEqual(out, ['n0 n2(g1) n3 n4 n5', 'n1', 'false', 'true']);
+});
+
+test('OBSERVED a window closes when its last tab is moved to another window; a tab created in it afterwards is refused', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const a = await T.win('a0'); const b = await T.win('b0');
+    await T.wait();
+    await chrome.tabs.move(a.tabs[0].id, { windowId: b.id, index: -1 });
+    const open = (await chrome.windows.getAll()).filter((w) => w.type === 'normal').map((w) => w.id);
+    let refused = null;
+    try { await chrome.tabs.create({ windowId: a.id, url: T.base + '/late', active: false }); } catch (e) { refused = String(e.message); }
+    return [String(open.includes(a.id)), String(open.includes(b.id)), await T.layout(b.id), refused];
+  });
+  assert.deepEqual(out.slice(0, 3), ['false', 'true', 'b0 a0']);
+  assert.match(out[3], /No window with id/);
+});
+
+test('OBSERVED a window kept alive by a placeholder about:blank tab survives its tabs leaving; it is appended outside any group', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const { wid, ids } = await T.six('k');
+    await chrome.tabs.group({ tabIds: [ids[3], ids[4], ids[5]], createProperties: { windowId: wid } });
+    const placeholder = await chrome.tabs.create({ windowId: wid, url: 'about:blank', active: false });
+    T.names.set(placeholder.id, 'placeholder');
+    const o = [await T.layout(wid)];
+    const other = await T.win('l0');
+    await T.wait();
+    for (const id of ids) await chrome.tabs.move(id, { windowId: other.id, index: -1 });
+    const open = (await chrome.windows.getAll()).filter((w) => w.type === 'normal').map((w) => w.id);
+    o.push(String(open.includes(wid)), await T.layout(wid));
+    await chrome.tabs.remove(placeholder.id);
+    o.push(String((await chrome.windows.getAll()).some((w) => w.id === wid)));
+    return o;
+  });
+  assert.deepEqual(out, ['k0 k1 k2 k3(g1) k4(g1) k5(g1) placeholder', 'true', 'placeholder', 'false']);
+});
+
+test('OBSERVED unpinned tabs stay behind every pinned tab: a move into the pinned region lands behind it, a pinned tab created later joins its end', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const { wid, ids } = await T.six('p');
+    await chrome.tabs.update(ids[0], { pinned: true });
+    await chrome.tabs.update(ids[1], { pinned: true });
+    const o = [await T.layout(wid)];
+    await chrome.tabs.move(ids[4], { index: 0 });
+    o.push(await T.layout(wid));
+    await T.tab(wid, 'out', { pinned: true });
+    o.push(await T.layout(wid));
+    await chrome.tabs.move(ids[1], { index: 0 });
+    o.push(await T.layout(wid));
+    return o;
+  });
+  assert.deepEqual(out, ['*p0 *p1 p2 p3 p4 p5', '*p0 *p1 p4 p2 p3 p5', '*p0 *p1 *out p4 p2 p3 p5', '*p1 *p0 *out p4 p2 p3 p5']);
+});
+
+test('OBSERVED tabs.ungroup of a middle member puts it right behind the group; tabs.group({groupId}) takes it back at that edge', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const { wid, ids } = await T.six('u');
+    const g = await chrome.tabs.group({ tabIds: [ids[1], ids[2], ids[3]], createProperties: { windowId: wid } });
+    const o = [await T.layout(wid)];
+    await chrome.tabs.ungroup([ids[2]]);
+    o.push(await T.layout(wid));
+    await chrome.tabs.group({ tabIds: [ids[2]], groupId: g });
+    o.push(await T.layout(wid));
+    return o;
+  });
+  assert.deepEqual(out, ['u0 u1(g1) u2(g1) u3(g1) u4 u5', 'u0 u1(g1) u3(g1) u2 u4 u5', 'u0 u1(g1) u3(g1) u2(g1) u4 u5']);
+});
+
+test('OBSERVED tabs.group is all-or-nothing: one unknown tab id rejects the call and nothing is grouped', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const { wid, ids } = await T.six('v');
+    const g = await chrome.tabs.group({ tabIds: [ids[1], ids[2]], createProperties: { windowId: wid } });
+    let refused = null;
+    try { await chrome.tabs.group({ tabIds: [ids[4], 99999999], groupId: g }); } catch (e) { refused = String(e.message); }
+    return [refused, await T.layout(wid)];
+  });
+  assert.match(out[0], /No tab with id/);
+  assert.equal(out[1], 'v0 v1(g1) v2(g1) v3 v4 v5');
 });
 
 test('OBSERVED bookmarks.move inside one parent: a LOWER index is exact, a HIGHER index lands one position early', async () => {
