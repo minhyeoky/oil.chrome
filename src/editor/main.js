@@ -1,9 +1,9 @@
 // The editor window: CodeMirror 6 + vim over the outline text. Boots from live Chrome state, writes with :w.
 
-import { history } from '@codemirror/commands';
+import { history, indentLess, indentMore } from '@codemirror/commands';
 import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldCode } from '@codemirror/language';
 import { EditorSelection, EditorState } from '@codemirror/state';
-import { EditorView, drawSelection, highlightActiveLine } from '@codemirror/view';
+import { EditorView, drawSelection, highlightActiveLine, keymap } from '@codemirror/view';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
 import { apply, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
 import { anchorExtensions, anchorSpan } from './anchors.js';
@@ -49,6 +49,8 @@ const readSnap = () => readSnapshot(chrome, { editorUrl: EDITOR_URL, focusWindow
 const extensions = [
   vim({ status: false }), // first: its keymap must win over everything below
   history(),
+  // Tab must not leave the editor; in an outline it moves the line one level (the parent changes)
+  keymap.of([{ key: 'Tab', run: indentMore, preventDefault: true }, { key: 'Shift-Tab', run: indentLess, preventDefault: true }]),
   drawSelection(),
   highlightActiveLine(),
   EditorView.lineWrapping,
@@ -181,6 +183,8 @@ async function write({ quit: thenQuit = false } = {}) {
     flash('applying…', 'info', 0);
     const report = await apply(chrome, p);
     await load({ keepCursor: true });
+    // windows created or touched by the write may have come to the front: bring the editor back
+    try { await chrome.windows.update((await chrome.windows.getCurrent()).id, { focused: true }); } catch { /* the editor is going away */ }
     const problems = [
       ...report.errors.map((e) => ({ sig: '✗', text: `${e.op}: ${e.message}` })),
       ...report.mismatches.map((m) => ({ sig: '⚠', text: `layout differs from the buffer: ${m}` })),

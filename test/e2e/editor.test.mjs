@@ -470,3 +470,16 @@ test('when undo makes the buffer clean again, a pending Chrome change is picked 
   assert.ok(!(await page.evaluate(() => window.oil.isDirty())));
   await closeEditor();
 });
+
+test('Tab and Shift-Tab indent / dedent the line instead of leaving the editor', async () => {
+  await seedAndOpen();
+  await goto('Hn');
+  await keys('A');
+  await press('Tab');
+  assert.match(await text(), /^ {4}\/t\d+ Hn http/m);
+  await press('Shift+Tab');
+  assert.match(await text(), /^ {2}\/t\d+ Hn http/m);
+  await press('Escape');
+  assert.equal(await page.evaluate(() => document.activeElement && document.activeElement.classList.contains('cm-content')), true, 'focus stayed in the editor');
+  await closeEditor();
+});
