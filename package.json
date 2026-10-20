@@ -2,6 +2,7 @@
   "name": "oil.chrome",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "description": "Edit Chrome windows, tab groups, tabs and bookmarks as one vim-editable outline",
   "type": "module",
   "scripts": {
