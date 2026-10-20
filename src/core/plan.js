@@ -6,7 +6,7 @@
 // Entity keys: existing `w12` `t12` `g5` `b11`; entities the plan creates get `n1`, `n2`, … in document order.
 
 import { bareHostUrl, splitGroupName, withScheme } from './grammar.js';
-import { countBookmarks, indexSnapshot, windowItems } from './model.js';
+import { countBookmarks, folderKeyTest, indexSnapshot, windowItems } from './model.js';
 import { parseText } from './parse.js';
 
 const entityOf = (ix, key) => {
@@ -48,7 +48,8 @@ export function assignRoles(lines, rootSet, report = () => {}) {
 export function plan(baseSnapshot, freshSnapshot, text) {
   const S = indexSnapshot(baseSnapshot);
   const F = indexSnapshot(freshSnapshot);
-  const { lines } = parseText(text);
+  // a line whose anchor names a window, group or folder of S stays a folder without its `/` (DESIGN.md §2)
+  const { lines } = parseText(text, { isFolderKey: folderKeyTest(S) });
 
   const errors = [];
   const warnings = [];

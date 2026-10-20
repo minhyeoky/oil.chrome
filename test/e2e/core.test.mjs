@@ -203,6 +203,43 @@ test('G11: edit a group title and color', async () => {
   });
 });
 
+test('a group line written without its `/` renames the group and keeps its color', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} Reading`),
+    expected: { windows: [['neovim', 'oil', { group: 'Reading', color: 'blue', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-group']);
+});
+
+test('a group line without its `/` but with a ` [color]` suffix sets both title and color', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} Papers [red]`),
+    expected: { windows: [['neovim', 'oil', { group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+});
+
+test('a group line cleared by cc empties the title; the members stay in the group', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} `),
+    expected: { windows: [['neovim', 'oil', { group: '', color: 'blue', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+});
+
+test('a stale group anchor without its `/` is no group line: the write is refused as for an anchorless line', async () => {
+  const st = await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), ['  /g99999 Papers', `    ${h.url('member')}`]),
+    expected: st,
+    allowErrors: true,
+  });
+  assert.equal(r.report.refused, true);
+  assert.match(r.plan.errors[0].message, /cannot read a URL/);
+  assert.ok(r.plan.warnings.some((w) => /unknown anchor \/g99999/.test(w.message)));
+});
+
 test('G12: delete the group line only → members ungrouped in place', async () => {
   await fresh();
   await scenario(h, {
@@ -359,6 +396,24 @@ test('rename a folder and change a bookmark URL', async () => {
     edit: (t, K) => replaceLine(replaceLine(t, K.title('Read later'), `  /${K.title('Read later')} Later/`), K('mdn'), `    /${K('mdn')} MDN ${h.url('mdn2')}`),
     expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [DEV(GITHUB, ['MDN', 'mdn2']), { folder: 'Later', children: [] }] }) },
   });
+});
+
+test('a bookmark folder line written without its `/` renames the folder; its children stay in it', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Dev'), `  /${K.title('Dev')} Tools`),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [{ folder: 'Tools', children: [GITHUB, MDN] }, LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-folder']);
+});
+
+test('a bookmark folder line cleared by cc renames the folder to an empty title; its children stay in it', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Dev'), `  /${K.title('Dev')} `),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [{ folder: '', children: [GITHUB, MDN] }, LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-folder']);
 });
 
 test('G18: move a bookmark to another folder', async () => {
