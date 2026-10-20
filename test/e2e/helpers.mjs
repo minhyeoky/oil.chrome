@@ -118,8 +118,8 @@ export async function launch({ headless = true, name = 'e2e', args = [] } = {}) 
   });
   /**
    * `clear()`, on a fresh browser when Chromium for Testing died on the way: it can crash (SIGSEGV) while windows are
-   * closed. Bare chrome.* calls that move a tab group to another window and then tabs back into the window it left
-   * reproduce it when the group's window is closed before the other one.
+   * closed. Bare chrome.* calls reproduce it: a group holding its window's active tab moves to another window, the tab
+   * that was active there moves to the window the group left, and the window the group went to is closed first.
    */
   h.reset = async () => {
     try {

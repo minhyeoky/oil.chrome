@@ -213,6 +213,29 @@ test('OBSERVED a window closes when its last tab is moved to another window; a t
   assert.match(out[3], /No window with id/);
 });
 
+test('OBSERVED a move inside one window clamps the index and keeps the window, even for its only tab or only group', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const open = async (wid) => (await chrome.windows.getAll()).some((w) => w.id === wid);
+    const solo = await T.win('s0');
+    await T.wait();
+    await chrome.tabs.move(solo.tabs[0].id, { index: 5 });
+    const o = [await T.layout(solo.id), String(await open(solo.id))];
+    const g = await T.win('g0');
+    const g1 = await T.tab(g.id, 'g1');
+    await T.wait();
+    const gid = await chrome.tabs.group({ tabIds: [g.tabs[0].id, g1], createProperties: { windowId: g.id } });
+    await chrome.tabGroups.move(gid, { index: 3 });
+    o.push(await T.layout(g.id), String(await open(g.id)));
+    const { wid, ids } = await T.six('m');
+    await chrome.tabs.move(ids[0], { index: 99 });
+    o.push(await T.layout(wid));
+    return o;
+  });
+  assert.deepEqual(out, ['s0', 'true', 'g0(g1) g1(g1)', 'true', 'm1 m2 m3 m4 m5 m0']);
+});
+
 test('OBSERVED a window kept alive by a placeholder about:blank tab survives its tabs leaving; it is appended outside any group', async () => {
   await h.reset();
   const out = await sw(async (arg) => {

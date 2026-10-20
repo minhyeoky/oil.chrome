@@ -6,7 +6,7 @@
 //   · tabs.move/tabGroups.move land at exactly `index`, even when moving to a higher index
 //   · tabs.move to an index strictly inside a group (members on both sides) joins it; to the group's edges it does not
 //   · tabs.move to another window leaves the group; tabs.group({groupId}) pulls tabs across windows itself
-//   · tabGroups.move to another window takes every tab of the group along, whatever the plan thinks of it
+//   · tabGroups.move to another window takes every tab of the group along
 //   · a window closes when its last tab leaves it, and tabs.create into a closed window is refused
 //   · unpinned tabs stay behind every pinned tab: a move into the pinned region lands right behind it
 //   · tabs.create without an index appends after the last tab, outside any group
@@ -53,17 +53,15 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     return out.filter((t) => t.id !== undefined);
   };
 
-  // ── 0. placeholders ──────────────────────────────────────────────────────
-  // Chrome closes a window when its last tab leaves, and later steps (new tabs, tabs coming over) still need it. A window
-  // all of whose tabs leave it gets an about:blank tab until placement is done. A tab leaves when the desired state puts
-  // it in another window, or when its group moves to another window (tabGroups.move takes every tab in the group — one
-  // the plan closes later or does not know too). A window that keeps a tab — one the plan closes later, or one it does
-  // not know — is never emptied. The placeholder is appended (outside any group) and never moved; placement works from
-  // the front, so it stays behind everything placed.
+  // ── 1. create ────────────────────────────────────────────────────────────
+  // A window whose tabs all leave it (placed elsewhere, or taken along by their group's tabGroups.move) would close
+  // before the later steps are done with it: it gets an about:blank placeholder, appended outside any group and never
+  // moved. A window that keeps a tab, or that the buffer empties on purpose (DESIGN.md §4), is left alone.
   const placeholders = [];
   {
     const homeOf = new Map(); // tab id → key of the window the desired state puts it in
     for (const Wd of desired.windows) for (const t of flatten(Wd)) homeOf.set(t.id, Wd.key);
+    // the tabs of a moving group go along whatever the plan thinks of them (closing ones, tabs it does not know)
     const carried = new Set(actions.filter((a) => a.kind === 'move-group').map((a) => idOf(a.key)));
     for (const Wd of desired.windows) {
       if (Wd.isNew || !Wd.items.length) continue;
@@ -76,7 +74,6 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     }
   }
 
-  // ── 1. create ────────────────────────────────────────────────────────────
   const newTabAct = new Map(actions.filter((a) => a.kind === 'new-tab').map((a) => [a.key, a]));
   const realised = new Set();
   for (const a of actions) {
@@ -131,8 +128,8 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     };
     for (const it of Wd.items) {
       if (!pinnedDone && !(it.type === 'tab' && it.pinned)) {
-        // the listed pinned tabs sit in front now; pinned tabs the desired state does not list (to be closed, or pinned
-        // outside meanwhile) come behind them, and the unpinned items start behind all of them
+        // pinned tabs the desired state does not list (to be closed, or pinned outside meanwhile) sit behind the
+        // listed ones: the unpinned items start behind all pinned tabs
         pinnedDone = true;
         pos = (await readWindow(winId)).filter((t) => t.pinned).length;
       }
@@ -231,7 +228,7 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
   // Tabs about to be closed are taken out of their groups first: left inside a span they would make every tab
   // placed next to them join the group (tabs.move into the interior of a group joins it). They go back at the end
   // when the deletes are skipped.
-  const ungroupedToClose = new Map(); // tab id → the group it was taken out of
+  const ungroupedToClose = new Map(); // tab id → key of the group it was taken out of
   let tabProblems = [];
   try {
     const closing = actions.filter((a) => a.kind === 'close-tab').map((a) => idOf(a.key));
@@ -239,7 +236,7 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
       const all = await readTabs();
       const grouped = closing.filter((id) => all.get(id) && all.get(id).groupId !== -1);
       if (grouped.length && (await step('ungroup tabs to close', () => api.tabs.ungroup(grouped))).ok) {
-        for (const id of grouped) ungroupedToClose.set(id, all.get(id).groupId);
+        for (const id of grouped) ungroupedToClose.set(id, `g${all.get(id).groupId}`);
       }
     }
     for (let pass = 1; pass <= MAX_PASSES; pass++) {
@@ -313,7 +310,7 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     if (report.errors.length) {
       report.skippedDeletes = true;
     } else {
-      // the tabs may have navigated since the snapshot: journal what they are now, the planned values for one that cannot be read
+      // the tabs may have navigated since the snapshot: journal their live values (the planned ones if unreadable)
       const tabsNow = [];
       for (const a of closes) {
         try {
@@ -356,14 +353,15 @@ export async function apply(api, plan, { journalLimit = 20 } = {}) {
     }
   }
 
-  // The tabs stay open when the deletes were skipped: those taken out of their group ahead of closing go back into it.
-  // They return while the group exists (it ends with its last member), at its edge rather than their old index.
+  // The tabs stay open when the deletes were skipped: those taken out of their group ahead of closing go back into it,
+  // at its edge rather than their old index. A group dissolved and re-created meanwhile has a new id (see groupIdOf).
   // tabs.group rejects the whole call on one unknown id, so only the tabs still open are sent.
   if (report.skippedDeletes && ungroupedToClose.size) {
     const open = await readTabs();
-    const byGroup = new Map();
-    for (const [id, groupId] of ungroupedToClose) if (open.has(id)) byGroup.set(groupId, [...(byGroup.get(groupId) || []), id]);
-    for (const [groupId, tabIds] of byGroup) {
+    const byGroup = new Map(); // group key → the tabs to put back
+    for (const [id, key] of ungroupedToClose) if (open.has(id)) byGroup.set(key, [...(byGroup.get(key) || []), id]);
+    for (const [key, tabIds] of byGroup) {
+      const groupId = groupIdOf(key);
       if (await groupExists(groupId)) await step('regroup tabs kept open', () => api.tabs.group({ tabIds, groupId }));
     }
   }

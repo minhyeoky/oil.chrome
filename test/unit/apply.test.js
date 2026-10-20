@@ -104,21 +104,22 @@ test('a folder that gained a bookmark after the plan is not removed (removeTree 
   assert.equal(api.store.journal, undefined, 'nothing journaled for a deletion that did not happen');
 });
 
-// ── windows, tabs and groups: a stateful stand-in ───────────────────────────────────────────────────────────────
-// fakeApi() above answers every call quietly, which cannot show what a window or a group looks like after tabs left it.
+// ── a stateful stand-in for windows, tabs and groups ────────────────────────
+// fakeApi() above answers every call quietly, which cannot show a window or a group after tabs have left it.
 
 /**
  * Bookmarks and storage stay fakeApi's. The rest follows what test/e2e/chrome-behavior.test.mjs observed in Chromium:
  * a window closes with its last tab and a group ends with its last member; unpinned tabs stay behind the pinned ones;
  * a tab moved inside a group's span joins it (a member stays in its own), across windows it drops group and pin;
- * tabs.group pulls a tab next to its group and rejects an unknown id as a whole; ungrouping a middle member puts it
- * behind the group. Only the calls the tests below make are modelled (no new groups or windows from a URL, no pinning).
- * `raw` is a snapshot in the shape model.js documents.
+ * a move inside one window clamps the index and keeps the window; tabs.group pulls a tab next to its group and rejects
+ * an unknown id as a whole; ungrouping a middle member puts it behind the group. Only the calls the tests make are
+ * modelled (no window from a URL, a new group gathers tabs of one window). `raw` has the shape model.js documents.
  */
 function modelApi(raw, { failOn = [] } = {}) {
   const api = fakeApi({ failOn });
   const wins = new Map(); // window id → tab ids in index order
   const tabs = new Map(); // tab id → { id, url, title, pinned, groupId, windowId }
+  const groups = new Map(raw.groups.map((g) => [g.id, { title: g.title, color: g.color }])); // group id → properties
   for (const w of raw.windows) {
     wins.set(w.id, w.tabs.map((t) => t.id));
     for (const t of w.tabs) tabs.set(t.id, { id: t.id, url: t.url, title: t.title, pinned: t.pinned, groupId: t.groupId, windowId: w.id });
@@ -140,10 +141,10 @@ function modelApi(raw, { failOn = [] } = {}) {
     const at = ms.map((t) => wins.get(t.windowId).indexOf(t.id));
     return { wid: ms[0].windowId, start: Math.min(...at), end: Math.max(...at) };
   };
+  const take = (t) => { const l = wins.get(t.windowId); l.splice(l.indexOf(t.id), 1); }; // out of the index order, window stays
   const lift = (t) => { // out of its window, which closes with its last tab
-    const l = wins.get(t.windowId);
-    l.splice(l.indexOf(t.id), 1);
-    if (!l.length) wins.delete(t.windowId);
+    take(t);
+    if (!wins.get(t.windowId).length) wins.delete(t.windowId);
   };
   const put = (t, wid, index) => { // into a window; unpinned tabs stay behind the pinned ones
     const l = listOf(wid);
@@ -175,14 +176,23 @@ function modelApi(raw, { failOn = [] } = {}) {
     }),
     get: m('tabs.get', (id) => view(tabOf(id))),
     query: m('tabs.query', ({ windowId } = {}) => [...wins].filter(([wid]) => windowId === undefined || wid === windowId).flatMap(([, l]) => l.map((id) => view(tabs.get(id))))),
-    update: m('tabs.update', (id, { url }) => { tabOf(id).url = url; }),
+    update: m('tabs.update', (id, props) => {
+      const t = tabOf(id);
+      if (props.url !== undefined) t.url = props.url;
+      if (props.pinned !== undefined && props.pinned !== t.pinned) { // a pinned tab joins the end of the pinned tabs
+        take(t);
+        t.pinned = props.pinned;
+        if (t.pinned) t.groupId = -1;
+        put(t, t.windowId, t.pinned ? -1 : 0);
+      }
+      return view(t);
+    }),
     move: m('tabs.move', (id, { windowId, index }) => {
       const t = tabOf(id);
       const across = windowId !== undefined && windowId !== t.windowId;
       const own = span(t.groupId);
       listOf(across ? windowId : t.windowId);
-      lift(t);
-      if (across) { t.groupId = -1; t.pinned = false; }
+      if (across) { lift(t); t.groupId = -1; t.pinned = false; } else take(t);
       const at = put(t, across ? windowId : t.windowId, index);
       if (!across && own && at >= own.start && at <= own.end) return view(t); // inside its own group's span it stays
       const l = wins.get(t.windowId);
@@ -190,8 +200,19 @@ function modelApi(raw, { failOn = [] } = {}) {
       t.groupId = left && right && left.groupId !== -1 && left.groupId === right.groupId ? left.groupId : -1;
       return view(t);
     }),
-    group: m('tabs.group', ({ tabIds, groupId }) => {
+    group: m('tabs.group', ({ tabIds, groupId, createProperties }) => {
       const ts = [].concat(tabIds).map(tabOf);
+      if (groupId === undefined) { // a new group gathers its tabs, in their current order, where the first one is
+        const wid = createProperties.windowId;
+        if (ts.some((t) => t.windowId !== wid)) throw new Error('not modelled: a new group across windows');
+        ts.sort((a, b) => wins.get(wid).indexOf(a.id) - wins.get(wid).indexOf(b.id));
+        const first = wins.get(wid).indexOf(ts[0].id);
+        for (const t of ts) { take(t); t.pinned = false; }
+        const gid = nextId++;
+        ts.forEach((t, k) => { put(t, wid, first + k); t.groupId = gid; });
+        groups.set(gid, {});
+        return gid;
+      }
       if (!span(groupId)) throw new Error(`No group with id: ${groupId}.`);
       for (const t of ts) {
         const was = span(groupId);
@@ -222,15 +243,16 @@ function modelApi(raw, { failOn = [] } = {}) {
     get: m('tabGroups.get', (gid) => {
       const sp = span(gid);
       if (!sp) throw new Error(`No group with id: ${gid}.`);
-      return { id: gid, windowId: sp.wid };
+      return { id: gid, windowId: sp.wid, ...groups.get(gid) };
     }),
+    update: m('tabGroups.update', (gid, props) => { Object.assign(groups.get(gid), props); }),
     move: m('tabGroups.move', (gid, { windowId, index }) => {
       const sp = span(gid);
       if (!sp) throw new Error(`No group with id: ${gid}.`);
       const wid = windowId ?? sp.wid;
       listOf(wid);
       const ms = wins.get(sp.wid).slice(sp.start, sp.end + 1).map((id) => tabs.get(id));
-      for (const t of ms) { lift(t); t.pinned = false; }
+      for (const t of ms) { (wid === sp.wid ? take : lift)(t); t.pinned = false; }
       const at = index < 0 ? wins.get(wid).length : index;
       ms.forEach((t, k) => put(t, wid, at + k));
     }),
@@ -239,6 +261,7 @@ function modelApi(raw, { failOn = [] } = {}) {
     created, // every tab the code under test opened with tabs.create: { windowId, url, active }
     removed, // every tab it closed, with the group it was in at that moment
     groupOf: (id) => tabs.get(id)?.groupId,
+    groupProps: (gid) => groups.get(gid),
     /** per window (by id), the tabs in order: title, `*` pinned, `(g<id>)` grouped */
     layout: () => [...wins].sort(([a], [b]) => a - b).map(([, l]) => l.map((id) => {
       const t = tabs.get(id);
@@ -257,7 +280,19 @@ const G5 = [{ id: 5, windowId: 1, title: 'G', color: 'blue' }];
 const placeholders = (api) => api.created.filter((c) => c.url === 'about:blank');
 const swapTabs = (text, a, wa, b, wb) => moveLine(moveLine(text, a, wb, 2), b, wa, 2); // a ↔ b, between windows wa and wb
 
-// ── a window that an earlier step empties must outlive it ────────────────────────────────────────────────────────
+test('the stateful fake clamps a move inside a window and keeps the window open', async () => {
+  const solo = modelApi(world([[tab(11, 'A')]]));
+  await solo.tabs.move(11, { index: 5 });
+  assert.deepEqual(solo.layout(), [['A']]);
+  const only = modelApi(world([[tab(11, 'A', { groupId: 5 }), tab(12, 'B', { groupId: 5 })]], [{ id: 5, windowId: 1, title: 'G', color: 'blue' }]));
+  await only.tabGroups.move(5, { index: 3 });
+  assert.deepEqual(only.layout(), [['A(g5)', 'B(g5)']]);
+  const many = modelApi(world([[tab(11, 'A'), tab(12, 'B'), tab(13, 'C')]]));
+  await many.tabs.move(11, { index: 99 });
+  assert.deepEqual(many.layout(), [['B', 'C', 'A']]);
+});
+
+// ── a window that an earlier step empties must outlive it ───────────────────
 test('swapping the tab lines of two one-tab windows: a placeholder tab keeps each window open until its new tab arrived', async () => {
   const s = world([[tab(11, 'A')], [tab(21, 'B')]]);
   const api = modelApi(s);
@@ -360,10 +395,22 @@ test('when placement fails the placeholders are still removed and no tab is lost
   const api = modelApi(s, { failOn: ['tabs.move'] });
   const report = await apply(api, plan(s, s, swapTabs(render(s).text, 't11', 'w1', 't21', 'w2')));
   assert.ok(report.errors.length > 0);
+  assert.deepEqual(placeholders(api).map((c) => c.windowId), [1, 2], 'each emptied window got one');
+  assert.deepEqual(api.removed.map((r) => r.url), ['about:blank', 'about:blank'], 'and both are gone again');
   assert.deepEqual(api.layout(), [['A'], ['B']]);
 });
 
-// ── pinned tabs the desired state does not place ─────────────────────────────────────────────────────────────────
+test('a placeholder that cannot be created is a reported error, and the deletes are skipped', async () => {
+  const s = world([[tab(11, 'A')], [tab(21, 'B'), tab(22, 'X')]]);
+  const api = modelApi(s, { failOn: ['tabs.create'] });
+  const report = await apply(api, plan(s, s, del(swapTabs(render(s).text, 't11', 'w1', 't21', 'w2'), 't22')));
+  assert.deepEqual(report.errors.map((e) => [e.op, e.message]), [['placeholder', 'tabs.create failed']]);
+  assert.equal(report.skippedDeletes, true);
+  assert.ok(!api.calls.includes('tabs.remove'));
+  assert.deepEqual(api.layout(), [['B'], ['X', 'A']]);
+});
+
+// ── pinned tabs the desired state does not place ────────────────────────────
 test('a pinned tab closed in the same write does not push the placement of the unpinned tabs off', async () => {
   const s = world([[tab(11, 'P1', { pinned: true }), tab(12, 'P2', { pinned: true }), tab(13, 'A'), tab(14, 'B'), tab(15, 'C')]]);
   const api = modelApi(s);
@@ -383,7 +430,17 @@ test('a pinned tab opened outside while editing stays in front of the placed tab
   assert.deepEqual(api.layout(), [['*U', 'C', 'A', 'B']]);
 });
 
-// ── tabs ungrouped ahead of closing return when the deletes are skipped ──────────────────────────────────────────
+test('a pinned tab moved to another window is pinned again, in front, and keeps its URL', async () => {
+  const s = world([[tab(11, 'P', { pinned: true }), tab(12, 'A')], [tab(21, 'B')]]);
+  const api = modelApi(s);
+  const report = await apply(api, plan(s, s, moveLine(render(s).text, 't11', 'w2', 2)));
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(report.mismatches, []);
+  assert.deepEqual(api.layout(), [['A'], ['*P', 'B']]);
+  assert.equal((await api.tabs.get(11)).url, 'https://p.test/');
+});
+
+// ── tabs ungrouped ahead of closing return if deletes are skipped ───────────
 const groupedWindow = () => world([[tab(11, 'A'), tab(12, 'X', { groupId: 5 }), tab(13, 'Y', { groupId: 5 }), tab(14, 'Z', { groupId: 5 })]], G5);
 const navigateA = (text) => replaceLine(text, 't11', '  /t11 A https://a2.test/'); // the navigation is what the test makes fail
 
@@ -406,6 +463,20 @@ test('no tab is put back when the deletes run', async () => {
   assert.deepEqual(report.errors, []);
   assert.equal(api.calls.filter((c) => c === 'tabs.group').length, 0);
   assert.deepEqual(api.layout(), [['A', 'X(g5)', 'Z(g5)']]);
+});
+
+test('a closing tab goes back into its group even when the group was re-created under a new id', async () => {
+  // W2 = [G(X, A), B]: X closes, A moves to window 1, B goes under G; the group dissolves and is re-created for B
+  const s = world([[tab(11, 'C')], [tab(21, 'X', { groupId: 5 }), tab(22, 'A', { groupId: 5 }), tab(23, 'B')]], [{ id: 5, windowId: 2, title: 'G', color: 'blue' }]);
+  const text = replaceLine(moveLine(moveLine(del(render(s).text, 't21'), 't22', 't11', 2), 't23', 'g5', 4), 't11', '  /t11 C https://c2.test/');
+  const api = modelApi(s, { failOn: ['tabs.update'] }); // the navigation of C fails, so the deletes are skipped
+  const report = await apply(api, plan(s, s, text));
+  assert.equal(report.skippedDeletes, true);
+  assert.deepEqual(report.errors.map((e) => e.op), ['navigate https://c2.test/']);
+  const gid = api.groupOf(23);
+  assert.ok(gid !== -1 && gid !== 5, 'B sits in a group with a new id');
+  assert.equal(api.groupOf(21), gid, 'X is back in that group');
+  assert.deepEqual(api.groupProps(gid), { title: 'G', color: 'blue' });
 });
 
 test('closing tabs whose group dissolved when they left it stay ungrouped, without an error', async () => {
@@ -437,7 +508,7 @@ test('a tab that vanished before it could be put back does not fail the others',
   assert.deepEqual(api.layout(), [['A', 'X(g5)', 'Z(g5)']]);
 });
 
-// ── the journal keeps what the tabs are now ──────────────────────────────────────────────────────────────────────
+// ── the journal keeps what the tabs are now ─────────────────────────────────
 test('the journal stores the live URL and title of a tab that changed since the snapshot; the planned ones when it cannot be read', async () => {
   const s = world([[tab(11, 'A'), tab(12, 'B')]]);
   const f = world([[tab(11, 'A'), tab(12, 'B', { url: 'https://b2.test/', title: 'B2' })]]);
