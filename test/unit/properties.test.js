@@ -2,11 +2,11 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseLine, normalizeTitle, normalizeUrl, splitGroupName, folderContent, groupContent, entryContent } from '../../src/core/grammar.js';
+import { parseLine, normalizeTitle, normalizeUrl, splitGroupName, folderContent, groupContent, entryContent, bareHostUrl, withScheme } from '../../src/core/grammar.js';
 import { parseText } from '../../src/core/parse.js';
 import { render } from '../../src/core/render.js';
 import { plan } from '../../src/core/plan.js';
-import { NASTY_TITLES, complexSnapshot, randomSnapshot, randomTitle, randomUrl, rng } from './properties.helpers.js';
+import { HOST_PORT_TITLES, NASTY_TITLES, complexSnapshot, randomSnapshot, randomTitle, randomUrl, rng } from './properties.helpers.js';
 
 test('property: render → parse → plan is empty for 300 random snapshots', () => {
   for (let seed = 1; seed <= 300; seed++) {
@@ -31,7 +31,7 @@ test('property: the identity also holds against a fresh snapshot that equals the
 
 test('property: every awkward title survives a window/group/folder/entry line round trip', () => {
   const r = rng(7);
-  const titles = [...NASTY_TITLES, ...Array.from({ length: 300 }, () => randomTitle(r))];
+  const titles = [...NASTY_TITLES, ...HOST_PORT_TITLES, ...Array.from({ length: 300 }, () => randomTitle(r))];
   for (const raw of titles) {
     const title = normalizeTitle(raw);
 
@@ -70,6 +70,33 @@ test('a folder whose last token looks like a URL gets an escape space', () => {
   assert.equal(parseLine('/b1 Re: /').type, 'folder');
   // as an unescaped line it is an entry with a URL, which is why the escape exists
   assert.equal(parseLine('/b1 Re:/').type, 'entry');
+});
+
+test('withScheme: a host:port token gets http (localhost, *.localhost, IPv4) or https (other hosts); other URLs pass', () => {
+  assert.equal(withScheme('localhost:3000'), 'http://localhost:3000');
+  assert.equal(withScheme('app.localhost:5173/x'), 'http://app.localhost:5173/x');
+  assert.equal(withScheme('LocalHost:3000/'), 'http://LocalHost:3000/');
+  assert.equal(withScheme('example.com:8080?q=1#f'), 'https://example.com:8080?q=1#f');
+  for (const u of ['https://localhost:3000/', 'tel:123', 'mailto:a@b.c', 'about:blank', 'chrome://settings', 'javascript:void(0)', 'localhost:abc', 'devbox:3000']) {
+    assert.equal(withScheme(u), u, u);
+  }
+});
+
+test('bareHostUrl: a lone bare host on a new tab line; localhost and IPv4 open over http, other hosts over https', () => {
+  const url = (s) => bareHostUrl(parseLine(`  ${s}`));
+  assert.equal(url('localhost'), 'http://localhost');
+  assert.equal(url('127.0.0.1:8080/x'), 'http://127.0.0.1:8080/x');
+  assert.equal(url('192.168.0.1'), 'http://192.168.0.1');
+  assert.equal(url('example.com'), 'https://example.com');
+  assert.equal(url('localhost.example.com'), 'https://localhost.example.com');
+  assert.equal(url('127.0.0.1.example.com'), 'https://127.0.0.1.example.com');
+  // `localhost:3000` is a URL token, so it is not a bare host: withScheme handles it
+  for (const s of ['hello world', 'localhost:3000', 'example.com:8080', 'tel:123', 'Re:', 'foo.c']) assert.equal(url(s), null, s);
+});
+
+test('`example.com/` and `localhost:3000/` are read the way their last token reads: a folder, and a URL', () => {
+  assert.deepEqual([parseLine('  example.com/').type, parseLine('  example.com/').name], ['folder', 'example.com']);
+  assert.deepEqual([parseLine('  localhost:3000/').type, parseLine('  localhost:3000/').url], ['entry', 'localhost:3000/']);
 });
 
 test('group colors: only a trailing [color] is a color', () => {

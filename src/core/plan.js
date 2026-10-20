@@ -5,7 +5,7 @@
 //
 // Entity keys: existing `w12` `t12` `g5` `b11`; entities the plan creates get `n1`, `n2`, … in document order.
 
-import { bareHostUrl, splitGroupName } from './grammar.js';
+import { bareHostUrl, splitGroupName, withScheme } from './grammar.js';
 import { countBookmarks, indexSnapshot, windowItems } from './model.js';
 import { parseText } from './parse.js';
 
@@ -194,14 +194,15 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       const t = S.tabs.get(rec.key);
       if (C.type === 'entry') {
         if (C.url && C.url !== t.url) {
-          A.update.push({ kind: 'navigate-tab', key: rec.key, line: C.n, from: t.url, to: C.url, label: `↻ tab ${short(t.title || t.url)} → ${C.url}` });
+          const to = withScheme(C.url);
+          A.update.push({ kind: 'navigate-tab', key: rec.key, line: C.n, from: t.url, to, label: `↻ tab ${short(t.title || t.url)} → ${to}` });
           mark(C, 'navigate', '↻ navigate');
         }
         if (C.title !== t.title) warn(C, 'title is read-only');
       }
       return rec;
     }
-    let url = C.url || bareHostUrl(C);
+    let url = C.url ? withScheme(C.url) : bareHostUrl(C);
     if (!url && C.srcKey) url = entityOf(S, C.srcKey)?.url || null;
     if (!url) { err(C, `cannot read a URL from "${short(C.content, 30)}"`); return null; }
     rec.url = url;
@@ -393,7 +394,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       const changes = {};
       const newTitle = C.type === 'empty' ? '' : C.title;
       if (newTitle !== b.title) changes.title = newTitle;
-      if (C.type === 'entry' && C.url && C.url !== b.url) changes.url = C.url;
+      if (C.type === 'entry' && C.url && C.url !== b.url) changes.url = withScheme(C.url);
       if (Object.keys(changes).length) {
         const bits = Object.entries(changes).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ');
         A.update.push({ kind: 'edit-bookmark', key: rec.key, line: C.n, changes, label: `✎ bookmark ${short(b.title || b.url)}: ${bits}` });
@@ -402,7 +403,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       return rec;
     }
     const src = C.srcKey ? entityOf(S, C.srcKey) : null;
-    rec.url = C.url || (src && src.url) || null;
+    rec.url = (C.url && withScheme(C.url)) || (src && src.url) || null;
     rec.title = C.title || (src && src.title) || '';
     if (!rec.url) { err(C, 'a bookmark needs a URL'); return null; }
     return rec;

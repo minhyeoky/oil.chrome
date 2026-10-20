@@ -100,6 +100,26 @@ test('G6: new tab lines (typed URLs)', async () => {
   });
 });
 
+test('a new tab line `localhost:<port>` opens http://localhost:<port>/', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', `http://localhost:${port}/`]], bookmarks: BM },
+  });
+  assert.equal(r.plan.actions[0].url, `http://localhost:${port}`);
+});
+
+test('a new tab line `localhost:<port>/path` and `127.0.0.1:<port>/path` open the page over http', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}/p/lh`, `  127.0.0.1:${port}/p/ip`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', 'lh', 'ip']], bookmarks: BM },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.url), [`http://localhost:${port}/p/lh`, `http://127.0.0.1:${port}/p/ip`]);
+});
+
 test('new tab inserted in the MIDDLE of a window lands at that position', async () => {
   await fresh();
   await scenario(h, {
