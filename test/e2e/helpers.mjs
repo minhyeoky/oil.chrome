@@ -77,11 +77,12 @@ export async function launch({ headless = true, name = 'e2e', args = [] } = {}) 
     return (sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker', { timeout: 15000 })));
   };
   /** Run `fn(arg)` inside the service worker (where `chrome.*`, `oilOpenEditor` and, after `core`, `OilCore` live). */
-  const call = async (fn, arg, { core = false } = {}) => {
+  const call = async (fn, arg, { core = false, prelude = null } = {}) => {
     for (let attempt = 0; ; attempt++) {
       try {
         const w = await getSw();
         if (core && !(await w.evaluate(() => typeof globalThis.OilCore !== 'undefined'))) await w.evaluate(code);
+        if (prelude && !(await w.evaluate(() => typeof globalThis.T !== 'undefined'))) await w.evaluate(prelude);
         return await w.evaluate(fn, arg);
       } catch (e) {
         if (attempt >= 2 || !/closed|destroyed|not found|detached|Target/i.test(String(e))) throw e;
