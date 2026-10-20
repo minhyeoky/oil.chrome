@@ -7,6 +7,7 @@ import { after, before, test } from 'node:test';
 import { launch } from './helpers.mjs';
 import { RESEARCH, STANDARD, scenario } from './lib.mjs';
 import { block, del, delBlock, insertAfter, lineOf, moveLine, reindent, replaceLine } from '../unit/fixtures.js';
+import { deletionCount } from '../../src/core/plan.js';
 
 let h;
 before(async () => { h = await launch({ name: 'core' }); });
@@ -309,6 +310,19 @@ test('G16: delete the folder line only → children move up, folder removed', as
     edit: (t, K) => del(t, K.title('Dev')),
     expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, LATER()] }) },
   });
+});
+
+test('the deletion count of a nested delete is what Chrome actually removed', async () => {
+  const MID = { folder: 'Mid', children: [{ folder: 'Sub', children: [['X', 'x'], ['Y', 'y']] }] };
+  await fresh({ windows: STANDARD.windows, bookmarks: bm({ bar: [DEV(GITHUB, MDN, MID), LATER()] }) });
+  // the Dev line goes (GitHub, MDN and Mid move up to the bar) and the Sub block (Sub, X, Y) goes with it
+  const r = await scenario(h, {
+    edit: (t, K) => delBlock(del(t, K.title('Dev')), K.title('Sub')),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, { folder: 'Mid', children: [] }, LATER()] }) },
+  });
+  const nodes = (snap) => { let n = 0; const walk = (x) => { n++; (x.children || []).forEach(walk); }; snap.bookmarks.forEach((r) => (r.children || []).forEach(walk)); return n; };
+  assert.equal(nodes(r.before.snapshot) - nodes(r.after.snapshot), 4); // Dev, Sub, X, Y
+  assert.equal(deletionCount(r.plan.actions), 4);
 });
 
 test('G17: rename a bookmark', async () => {

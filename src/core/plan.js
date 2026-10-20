@@ -498,11 +498,21 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     const gone = [];
     const walk = (fk) => { for (const ck of S.bm.get(fk).childKeys) { gone.push(ck); if (S.bm.get(ck).isFolder) walk(ck); } };
     walk(k);
-    const count = gone.filter((ck) => !S.bm.get(ck).isFolder && deleted.has(ck)).length;
+    // what removeTree takes with it: a child that stays (moved out, or gone already) keeps its subtree, and anything
+    // deleted below it is its own action, so the tally goes down through deleted folders only
+    let count = 0;
+    let folders = 0;
+    const tally = (fk) => {
+      for (const ck of S.bm.get(fk).childKeys) {
+        if (!deleted.has(ck)) continue;
+        if (S.bm.get(ck).isFolder) { folders++; tally(ck); } else count++;
+      }
+    };
+    tally(k);
     // bookmarks added outside while editing would be wiped by removeTree
     const fWalk = (fk) => (F.bm.get(fk)?.childKeys ?? []).some((ck) => !S.bm.has(ck) || (F.bm.get(ck).isFolder && fWalk(ck)));
     if (fWalk(k)) err(null, `folder "${b.title}" got new contents outside — :e! to reload`);
-    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
+    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, folders, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
   }
 
   const actions = [
@@ -529,6 +539,16 @@ export function summarize(actions) {
     else if (a.kind === 'close-tab' || a.kind.startsWith('delete-')) s.remove++;
   }
   return s;
+}
+
+/** Entities a write removes: tabs closed, bookmarks deleted, folders deleted (the outer one and those nested in it). */
+export function deletionCount(actions) {
+  let n = 0;
+  for (const a of actions) {
+    if (a.kind === 'close-tab' || a.kind === 'delete-bookmark') n++;
+    else if (a.kind === 'delete-folder') n += 1 + a.folders + a.count;
+  }
+  return n;
 }
 
 export function summaryText(actions) {

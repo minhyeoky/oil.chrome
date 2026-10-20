@@ -131,7 +131,7 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
 | navigate-tab | `↻ tab <old> → <new url>` | `tabs.update({url})` |
 | edit-bookmark / edit-folder / edit-group | `✎ ...` | `bookmarks.update` / `tabGroups.update` |
 | close-tab | `✕ tab <title>` | `tabs.remove` |
-| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, 하위는 한 줄로 합친다) |
+| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, 하위는 한 줄로 합친다 — n은 함께 지워지는 북마크) |
 | remove-group | `✕ group <title> (ungroup)` | 표시 전용 — 멤버 이동이 실행을 진다 |
 
 경고(적용은 함): 탭 제목 수정(`title is read-only`), 핀 탭을 비핀 뒤로 보냄(`pinned tabs stay first`), 그룹 안의 핀 탭(`pinned tabs can't be grouped` — 그룹 밖에 둔다), 사라진 엔티티 줄.
@@ -182,7 +182,7 @@ desired 구조(창별 탭 순서·그룹 멤버십, 폴더별 자식 순서)를 
 | `Tab` / `S-Tab` | 들여쓰기 / 내어쓰기 |
 | `g?` | 도움말 |
 
-- **확인창**: `y` `Y` `o` `O` `<CR>` 적용, `n` `N` `q` `<Esc>` 취소. 액션을 종류별로 묶어 보여주고 삭제 수를 맨 위에 빨갛게.
+- **확인창**: `y` `Y` `o` `O` `<CR>` 적용, `n` `N` `q` `<Esc>` 취소. 액션을 종류별로 묶어 보여주고 삭제 수를 맨 위에 빨갛게 — 닫는 탭, 지우는 북마크, 지우는 폴더(하위 폴더 포함)를 하나씩 센다.
 - **라이브 갱신**: tabs·windows·tabGroups·bookmarks 이벤트가 오면, 버퍼가 마지막 렌더와 같을 때만 다시 렌더한다(150ms 디바운스, 커서는 같은 앵커 줄로). 수정 중이면 상태줄에 `⟳ chrome changed — :e! to reload`.
 - 테마: gruvbox dark, `JetBrainsMono Nerd Font, JetBrains Mono, ui-monospace, Menlo`.
 
