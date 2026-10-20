@@ -199,6 +199,40 @@ test('x and dw at the name start edit the name; the anchor is untouched', async 
   await closeEditor();
 });
 
+test('Enter right after the anchor leaves an empty line above; the tab keeps its anchor and :w creates no copy', async () => {
+  await seedAndOpen();
+  const before = { ids: await ids(), state: await state() };
+  await goto('Oil');
+  await keys('i');
+  await press('Enter');
+  const insert = await page.evaluate(() => { const v = window.oil.view; const h = v.state.selection.main.head; const l = v.state.doc.lineAt(h); return { before: v.state.sliceDoc(l.from, h), after: v.state.sliceDoc(h, l.to) }; });
+  assert.match(insert.before, /^ {2}\/t\d+ $/, 'the cursor is behind the anchor of the moved line');
+  assert.match(insert.after, /^Oil http/, 'and on the first character of its content');
+  await press('Escape');
+  const lines = (await text()).split('\n');
+  const i = lines.findIndex((l) => /^ {2}\/t\d+ Oil http/.test(l));
+  assert.ok(i > 0, 'the tab line keeps its anchor');
+  assert.equal(lines[i - 1], '', 'an empty line is left above');
+  assert.equal(lines.filter((l) => /Oil http/.test(l)).length, 1, 'no unanchored copy of the content');
+  assert.deepEqual(await page.evaluate(() => window.oil.plan().actions), [], 'nothing to apply');
+  await keys(':w'); await press('Enter');
+  await page.waitForFunction(() => /no changes/.test(document.querySelector('.oil-s-msg').textContent));
+  assert.equal(await page.locator('.oil-modal').count(), 0, 'no confirmation: there is nothing to confirm');
+  assert.deepEqual(await state(), before.state);
+  assert.deepEqual(await ids(), before.ids, 'the tab kept its identity');
+  await closeEditor();
+});
+
+test('Enter in the middle of a title still splits the line', async () => {
+  await seedAndOpen();
+  await goto('Oil');
+  await keys('li');
+  await press('Enter');
+  await press('Escape');
+  assert.match(await text(), /^ {2}\/t\d+ O\nil http/m);
+  await closeEditor();
+});
+
 test('S rewrites a line but keeps indent and anchor', async () => {
   await seedAndOpen();
   await goto('Attention');
