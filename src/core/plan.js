@@ -363,7 +363,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     desired.windows.push({
       key: win.key, isNew: win.isNew,
       items: win.eff.map((it) => (it.type === 'tab'
-        ? { type: 'tab', key: it.rec.key }
+        ? { type: 'tab', key: it.rec.key, pinned: it.rec.pinned }
         : { type: 'group', key: it.rec.key, members: it.members.map((m) => m.key) })),
     });
   }
