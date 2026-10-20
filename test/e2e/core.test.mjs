@@ -509,3 +509,19 @@ test('a group whose members all leave but is refilled by other tabs is recreated
     expected: { windows: [['attention', 'gpt3', 'neovim', RESEARCH('oil', 'hn')], ['tmux', 'codemirror']], bookmarks: BM },
   });
 });
+
+test('collapsed groups behave like open ones: join, move to another window', async () => {
+  const collapse = () => h.call(async () => { const g = (await chrome.tabGroups.query({}))[0]; await chrome.tabGroups.update(g.id, { collapsed: true }); });
+  await fresh();
+  await collapse();
+  await scenario(h, {
+    edit: (t, K) => moveLine(t, K('hn'), K('gpt3'), 4),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3', 'hn')], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+  await fresh();
+  await collapse();
+  await scenario(h, {
+    edit: (t, K) => insertAfter(delBlock(t, K.title('Research')), K('codemirror'), block(t, K.title('Research'))),
+    expected: { windows: [['neovim', 'oil', 'hn'], ['tmux', 'codemirror', RESEARCH('attention', 'gpt3')]], bookmarks: BM },
+  });
+});

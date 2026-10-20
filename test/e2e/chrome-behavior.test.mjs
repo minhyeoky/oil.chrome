@@ -227,3 +227,22 @@ test('OBSERVED tabs.create at an index inside a group joins it; without an index
   });
   assert.equal(out[0], 'c0 c1 c2 c3(g1) mid(g1) c4(g1) c5(g1) end');
 });
+
+test('OBSERVED a tab group ceases to exist when its last member leaves (ungroup, or moved to another window)', async () => {
+  await h.reset();
+  const out = await sw(async (arg) => {
+    T.base = arg.base;
+    const { wid, ids } = await T.six('z');
+    const g1 = await chrome.tabs.group({ tabIds: [ids[1], ids[2]], createProperties: { windowId: wid } });
+    const g2 = await chrome.tabs.group({ tabIds: [ids[4]], createProperties: { windowId: wid } });
+    const exists = async (g) => { try { await chrome.tabGroups.get(g); return true; } catch { return false; } };
+    const o = [await exists(g1), await exists(g2)];
+    await chrome.tabs.ungroup([ids[1], ids[2]]);
+    const other = await T.win('y0');
+    await T.wait();
+    await chrome.tabs.move(ids[4], { windowId: other.id, index: -1 });
+    o.push(await exists(g1), await exists(g2));
+    return o;
+  });
+  assert.deepEqual(out, [true, true, false, false]);
+});
