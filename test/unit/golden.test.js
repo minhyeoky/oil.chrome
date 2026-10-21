@@ -476,3 +476,85 @@ test('marks: new, copy, move, navigate, edit appear on the right lines', () => {
   assert.ok(ls.findIndex((l) => l.includes('example.com')) >= 0);
   assert.deepEqual(byLine(ls.findIndex((l) => l.includes('example.com'))), ['+ new']);
 });
+
+// ── group line → bookmark folder ────────────────────────────────────────────
+
+test('a group block copied under a bookmark folder → new folder titled without ` [color]`, tabs become bookmarks, group kept', () => {
+  const p = run(insertAfter(EXAMPLE, 'b13', reindent(block(EXAMPLE, 'g5'), 2)));
+  assert.deepEqual(kinds(p), ['new-folder', 'new-bookmark', 'new-bookmark']);
+  const nf = ofKind(p, 'new-folder')[0];
+  assert.equal(nf.title, 'Research');
+  assert.equal(nf.parent, 'b13');
+  assert.equal(nf.label, '+ folder Research → Bookmarks bar/Read later');
+  assert.ok(ofKind(p, 'new-bookmark').every((a) => a.parent === nf.key && a.source.type === 'tab'));
+  clean(p);
+});
+
+test('a group block moved under a bookmark folder → the folder is titled without ` [color]`, the group is dissolved and its tabs close', () => {
+  const p = run(insertAfter(delBlock(EXAMPLE, 'g5'), 'b13', reindent(block(EXAMPLE, 'g5'), 2)));
+  assert.deepEqual([...kinds(p)].sort(), ['close-tab', 'close-tab', 'new-bookmark', 'new-bookmark', 'new-folder', 'remove-group']);
+  assert.equal(ofKind(p, 'new-folder')[0].title, 'Research');
+  clean(p);
+});
+
+test('a group line without a title turns into an untitled folder', () => {
+  const p = run(insertAfter(EXAMPLE, 'b13', ['    /g5 [blue]/']));
+  assert.equal(ofKind(p, 'new-folder')[0].title, '');
+});
+
+test('a folder line typed by hand under bookmarks keeps its literal name, `[color]` included', () => {
+  const p = run(insertAfter(EXAMPLE, 'b13', ['    Research [blue]/']));
+  assert.deepEqual(kinds(p), ['new-folder']);
+  assert.equal(p.actions[0].title, 'Research [blue]');
+  clean(p);
+});
+
+test('renaming a bookmark folder to something ending in `[color]` keeps the literal name', () => {
+  const p = run(replaceLine(EXAMPLE, 'b13', '  /b13 Later [blue]/'));
+  assert.deepEqual(kinds(p), ['edit-folder']);
+  assert.deepEqual(p.actions[0].changes, { title: 'Later [blue]' });
+});
+
+// ── host:port tokens ────────────────────────────────────────────────────────
+
+test('new tab lines `host:port[/path]` get the scheme a browser gives them: localhost and IPv4 http, other hosts https', () => {
+  const lines = ['localhost:3000', 'example.com:8080', '127.0.0.1:8080/x', 'localhost', '192.168.0.1', 'localhost:3000/a?b=1#c', 'app.localhost:5173', 'localhost:3000/'];
+  const p = run(insertAfter(EXAMPLE, 't22', lines.map((l) => `  ${l}`)));
+  assert.deepEqual(kinds(p), lines.map(() => 'new-tab'));
+  assert.deepEqual(p.actions.map((a) => a.url), [
+    'http://localhost:3000', 'https://example.com:8080', 'http://127.0.0.1:8080/x', 'http://localhost', 'http://192.168.0.1',
+    'http://localhost:3000/a?b=1#c', 'http://app.localhost:5173', 'http://localhost:3000/',
+  ]);
+  assert.ok(p.actions.every((a) => a.window === 'w2'));
+  clean(p);
+});
+
+test('real schemes are kept on a new tab line: tel: mailto: about: chrome:// data: javascript: file:///', () => {
+  const urls = ['tel:123', 'mailto:a@b.c', 'about:blank', 'chrome://settings', 'data:text/plain,hi', 'javascript:void(0)', 'file:///tmp/a.txt'];
+  const p = run(insertAfter(EXAMPLE, 't22', urls.map((u) => `  ${u}`)));
+  assert.deepEqual(kinds(p), urls.map(() => 'new-tab'));
+  assert.deepEqual(p.actions.map((a) => a.url), urls);
+  clean(p);
+});
+
+test('a title in front of a host:port works like a title in front of a URL', () => {
+  const p = run(insertAfter(EXAMPLE, 't22', ['  Dev server localhost:3000']));
+  assert.deepEqual(p.actions.map((a) => [a.kind, a.url]), [['new-tab', 'http://localhost:3000']]);
+  clean(p);
+});
+
+test('under a bookmark folder a host:port is a URL as well; a bare host without a port still is not', () => {
+  const p = run(insertAfter(EXAMPLE, 'b13', ['    Dev localhost:3000', '    example.com']));
+  assert.deepEqual(ofKind(p, 'new-bookmark').map((a) => [a.title, a.url]), [['Dev', 'http://localhost:3000']]);
+  assert.equal(p.errors.length, 1);
+  assert.match(p.errors[0].message, /needs a URL/);
+});
+
+test('editing a URL to a host:port navigates the tab / edits the bookmark with the scheme added', () => {
+  let t = replaceLine(EXAMPLE, 't22', '  /t22 CodeMirror example.com:8080');
+  t = replaceLine(t, 'b11', '    /b11 GitHub localhost:3000/x');
+  const p = run(t);
+  assert.deepEqual(ofKind(p, 'navigate-tab').map((a) => a.to), ['https://example.com:8080']);
+  assert.deepEqual(ofKind(p, 'edit-bookmark').map((a) => a.changes), [{ url: 'http://localhost:3000/x' }]);
+  clean(p);
+});

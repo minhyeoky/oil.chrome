@@ -5,7 +5,7 @@
 //
 // Entity keys: existing `w12` `t12` `g5` `b11`; entities the plan creates get `n1`, `n2`, … in document order.
 
-import { bareHostUrl, splitGroupName } from './grammar.js';
+import { bareHostUrl, splitGroupName, withScheme } from './grammar.js';
 import { countBookmarks, indexSnapshot, windowItems } from './model.js';
 import { parseText } from './parse.js';
 
@@ -194,14 +194,15 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       const t = S.tabs.get(rec.key);
       if (C.type === 'entry') {
         if (C.url && C.url !== t.url) {
-          A.update.push({ kind: 'navigate-tab', key: rec.key, line: C.n, from: t.url, to: C.url, label: `↻ tab ${short(t.title || t.url)} → ${C.url}` });
+          const to = withScheme(C.url);
+          A.update.push({ kind: 'navigate-tab', key: rec.key, line: C.n, from: t.url, to, label: `↻ tab ${short(t.title || t.url)} → ${to}` });
           mark(C, 'navigate', '↻ navigate');
         }
         if (C.title !== t.title) warn(C, 'title is read-only');
       }
       return rec;
     }
-    let url = C.url || bareHostUrl(C);
+    let url = C.url ? withScheme(C.url) : bareHostUrl(C);
     if (!url && C.srcKey) url = entityOf(S, C.srcKey)?.url || null;
     if (!url) { err(C, `cannot read a URL from "${short(C.content, 30)}"`); return null; }
     rec.url = url;
@@ -393,7 +394,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       const changes = {};
       const newTitle = C.type === 'empty' ? '' : C.title;
       if (newTitle !== b.title) changes.title = newTitle;
-      if (C.type === 'entry' && C.url && C.url !== b.url) changes.url = C.url;
+      if (C.type === 'entry' && C.url && C.url !== b.url) changes.url = withScheme(C.url);
       if (Object.keys(changes).length) {
         const bits = Object.entries(changes).map(([k, v]) => `${k} ${JSON.stringify(v)}`).join(', ');
         A.update.push({ kind: 'edit-bookmark', key: rec.key, line: C.n, changes, label: `✎ bookmark ${short(b.title || b.url)}: ${bits}` });
@@ -402,7 +403,7 @@ export function plan(baseSnapshot, freshSnapshot, text) {
       return rec;
     }
     const src = C.srcKey ? entityOf(S, C.srcKey) : null;
-    rec.url = C.url || (src && src.url) || null;
+    rec.url = (C.url && withScheme(C.url)) || (src && src.url) || null;
     rec.title = C.title || (src && src.title) || '';
     if (!rec.url) { err(C, 'a bookmark needs a URL'); return null; }
     return rec;
@@ -412,7 +413,10 @@ export function plan(baseSnapshot, freshSnapshot, text) {
   for (const R of lines) {
     if ((R.role !== 'broot' && R.role !== 'bfolder') || R.gone) continue;
     if (R.role === 'broot' && R.copyOf) { err(R, 'duplicate bookmark root'); continue; }
-    const rec = { key: R.key, line: R, isNew: !R.ekey, copy: !!R.copyOf, source: srcType(R.srcKey), srcKey: R.srcKey, isFolder: true, title: R.name, isRoot: R.role === 'broot', children: [] };
+    const source = srcType(R.srcKey);
+    // a group line turned into a folder drops its ` [color]` suffix: the color is group syntax, not part of the name
+    const title = source === 'group' ? splitGroupName(R.name).title : R.name;
+    const rec = { key: R.key, line: R, isNew: !R.ekey, copy: !!R.copyOf, source, srcKey: R.srcKey, isFolder: true, title, isRoot: R.role === 'broot', children: [] };
     rec.parentKey = R.parent >= 0 ? lines[R.parent].key : null;
     folderRecs.set(R.key, rec);
     if (rec.isNew) newFolders.set(R.key, { title: rec.title, parent: rec.parentKey });
@@ -495,11 +499,21 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     const gone = [];
     const walk = (fk) => { for (const ck of S.bm.get(fk).childKeys) { gone.push(ck); if (S.bm.get(ck).isFolder) walk(ck); } };
     walk(k);
-    const count = gone.filter((ck) => !S.bm.get(ck).isFolder && deleted.has(ck)).length;
+    // what removeTree takes with it: a child that stays (moved out, or gone already) keeps its subtree, and anything
+    // deleted below it is its own action, so the tally goes down through deleted folders only
+    let count = 0;
+    let folders = 0;
+    const tally = (fk) => {
+      for (const ck of S.bm.get(fk).childKeys) {
+        if (!deleted.has(ck)) continue;
+        if (S.bm.get(ck).isFolder) { folders++; tally(ck); } else count++;
+      }
+    };
+    tally(k);
     // bookmarks added outside while editing would be wiped by removeTree
     const fWalk = (fk) => (F.bm.get(fk)?.childKeys ?? []).some((ck) => !S.bm.has(ck) || (F.bm.get(ck).isFolder && fWalk(ck)));
     if (fWalk(k)) err(null, `folder "${b.title}" got new contents outside — :e! to reload`);
-    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
+    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, folders, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
   }
 
   const actions = [
@@ -526,6 +540,16 @@ export function summarize(actions) {
     else if (a.kind === 'close-tab' || a.kind.startsWith('delete-')) s.remove++;
   }
   return s;
+}
+
+/** Entities a write removes: tabs closed, bookmarks deleted, folders deleted (the outer one and those nested in it). */
+export function deletionCount(actions) {
+  let n = 0;
+  for (const a of actions) {
+    if (a.kind === 'close-tab' || a.kind === 'delete-bookmark') n++;
+    else if (a.kind === 'delete-folder') n += 1 + a.folders + a.count;
+  }
+  return n;
 }
 
 export function summaryText(actions) {
