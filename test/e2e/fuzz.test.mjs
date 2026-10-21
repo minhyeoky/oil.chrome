@@ -73,7 +73,7 @@ function mutate(top, r, gen, h) {
   const pick = (f) => { const c = all.filter(f); return c.length ? c[int(c.length)] : null; };
   const boxes = (kind) => all.filter(({ n }) => (kind === 'tab' ? isTabBox(n) : isBmBox(n)));
   const place = (node, box) => { box.n.children.splice(int(box.n.children.length + 1), 0, node); };
-  const op = int(11);
+  const op = int(12);
   switch (op) {
     case 0: { // delete a line only (children are re-attached in place)
       const t = pick(({ n, parent }) => parent && n.kind !== 'window' && n.kind !== 'root');
@@ -159,6 +159,14 @@ function mutate(top, r, gen, h) {
       if (!m) return null; // a group created by an earlier edit in this round has no anchor yet
       g.n.text = `${m[1]}Edited${int(1000)} [${gen.colors()}]/`;
       return `edit group ${g.n.text}`;
+    }
+    case 10: { // swap the tab contents of two windows (every tab of each leaves its window)
+      const wins = all.filter(({ n }) => n.kind === 'window');
+      if (wins.length < 2) return null;
+      const a = wins[int(wins.length)];
+      const b = wins.filter((w) => w !== a)[int(wins.length - 1)];
+      [a.n.children, b.n.children] = [b.n.children, a.n.children];
+      return `swap the tabs of ${a.n.text} and ${b.n.text}`;
     }
     default: { // new window with moved and/or new tabs
       const kids = [];

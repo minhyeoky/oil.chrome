@@ -45,7 +45,7 @@ export function keysOf(text) {
 export async function scenario(h, { edit, expected, warnings, allowErrors = false }) {
   const { text, snapshot } = await h.render();
   const K = keysOf(text);
-  const edited = typeof edit === 'function' ? edit(text, K, h) : edit;
+  const edited = typeof edit === 'function' ? await edit(text, K, h) : edit; // may change Chrome between render and apply
   const { plan, report } = await h.applyText(snapshot, edited);
   if (!allowErrors) {
     assert.deepEqual(plan.errors, [], 'plan errors');
