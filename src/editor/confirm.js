@@ -1,7 +1,7 @@
 // Modal overlays (DESIGN.md §7): the confirmation of a write, a notice (errors / apply report) and the help.
 // They capture the keyboard while open (capture-phase listener) so nothing reaches the editor behind them.
 
-import { summarize } from '../core/plan.js';
+import { deletionCount, summarize } from '../core/plan.js';
 
 const GROUPS = [
   { id: 'del', title: 'Delete', kinds: ['close-tab', 'delete-bookmark', 'delete-folder', 'remove-group'] },
@@ -49,15 +49,6 @@ function overlay(build, onKey) {
     root.addEventListener('mousedown', (e) => { if (e.target === root) onKey({ key: 'Escape' }, close); });
   });
 }
-
-const deletionCount = (actions) => {
-  let n = 0;
-  for (const a of actions) {
-    if (a.kind === 'close-tab' || a.kind === 'delete-bookmark') n++;
-    else if (a.kind === 'delete-folder') n += 1 + a.count;
-  }
-  return n;
-};
 
 /** Confirmation of a write. Resolves true (apply) or false (cancel). */
 export function showConfirm(plan) {
