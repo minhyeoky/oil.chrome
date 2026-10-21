@@ -32,6 +32,11 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
 - 앵커는 줄 맨 앞(들여쓰기 뒤)에서만 읽는다. 렌더 시 숨김(conceal) + atomic이다.
 - 폴더 이름은 끝의 `/` 하나만 뗀다 — 제목이 `foo/`인 폴더는 `foo//`로 렌더된다.
 - 이름의 마지막 토큰이 URL로 읽히는 폴더(`Re:`)는 `Re: /`로 렌더한다.
+- `host:port[/path]` 꼴 URL 토큰(`localhost:3000` `example.com:8080`)은 스킴 없는 주소다.
+  - 크롬에 쓸 때(새 탭·새 북마크·탭 이동·북마크 URL 수정) 스킴을 붙인다 — `localhost`·`*.localhost`·IPv4는 `http://`, `host.tld`(끝 라벨이 영문 2자 이상)는 `https://`.
+  - 고치지 않은 줄은 저장된 URL과 글자 그대로 비교한다 — 스킴 없이 저장된 북마크도 제 줄을 지킨다.
+  - 점 없는 호스트(`devbox:3000`)는 스킴으로 읽힌다 — `http://devbox:3000`처럼 스킴을 쓴다.
+- URL 토큰이 없는 새 탭 줄은 단일 토큰이 `host[:port][/path]` 꼴이면 URL로 읽는다(`localhost` `127.0.0.1:8080/x` `example.com`). 북마크 줄에는 쓰지 않는다.
 - 그룹 폴더: 이름 끝이 ` [color]`(grey blue red yellow green pink purple cyan orange)면 색이다. 제목이 빈 그룹은 `[blue]/`.
 - 빈 줄은 무시한다. 렌더는 최상위 블록 사이에 빈 줄 하나를 둔다.
 - 부모 = **앞쪽에서 가장 가까운, 들여쓰기가 더 작은 folder 줄**(entry 줄은 부모가 못 된다).
@@ -97,6 +102,7 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
   - 탭 → 북마크 폴더: 북마크 생성. 그 탭에 tabs 도메인 정체 후보가 없으면 탭은 닫힌다(= 저장하고 닫기).
   - 북마크 → 창 아래: 탭 열기. 북마크에 정체 후보가 없으면 북마크는 지워진다.
   - 북마크 폴더 블록 → 최상위: 새 창(자식 북마크는 탭으로). 창 블록 → 북마크 루트 아래: 새 폴더(자식 탭은 북마크로).
+  - 그룹 줄 → 북마크 폴더 아래: 새 폴더(자식 탭은 북마크로). 제목에서 ` [color]`를 뗀다 — 색은 그룹 문법이다. `g` 앵커가 아닌 폴더 줄(손으로 쓴 줄, 창 줄)은 이름 그대로 둔다.
 - 정체 후보가 0개인 base 엔티티는 제거다 — 탭 닫기, 북마크 삭제, 폴더는 removeTree, 그룹은 해제(멤버는 각자 자기 줄을 따른다), 창은 별도 동작 없음(탭이 다 빠지면 크롬이 닫는다).
 - base에 없는 앵커(이전 렌더에서 yank해 둔 줄 등)는 앵커 없는 새 줄로 다룬다 — 닫은 탭 줄을 `p`하면 다시 열린다.
 - 앵커가 있고 내용이 빈 줄은 "값 유지"다(탭은 URL 유지, 북마크 제목은 빈 문자열이 된다 — 보이는 대로).
@@ -130,12 +136,12 @@ url     := 마지막 공백 구분 토큰이 /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/ �
 | navigate-tab | `↻ tab <old> → <new url>` | `tabs.update({url})` |
 | edit-bookmark / edit-folder / edit-group | `✎ ...` | `bookmarks.update` / `tabGroups.update` |
 | close-tab | `✕ tab <title>` | `tabs.remove` |
-| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, 하위는 한 줄로 합친다) |
+| delete-bookmark / delete-folder | `✕ bookmark` / `✕ folder <title> (n bookmarks)` | `remove` / `removeTree` (가장 바깥 폴더만, 하위는 한 줄로 합친다 — n은 함께 지워지는 북마크) |
 | remove-group | `✕ group <title> (ungroup)` | 표시 전용 — 멤버 이동이 실행을 진다 |
 
 경고(적용은 함): 탭 제목 수정(`title is read-only`), 핀 탭을 비핀 뒤로 보냄(`pinned tabs stay first`), 그룹 안의 핀 탭(`pinned tabs can't be grouped` — 그룹 밖에 둔다), 사라진 엔티티 줄.
 
-오류(적용 거부): 최상위 entry, 그룹 안 폴더, 북마크 루트 삭제·이동, URL 없는 새 북마크, URL로 못 읽는 새 탭 줄(단일 토큰이 `host.tld[/path]` 꼴이면 `https://`를 붙인다), 사라진 부모.
+오류(적용 거부): 최상위 entry, 그룹 안 폴더, 북마크 루트 삭제·이동, URL 없는 새 북마크, URL로 못 읽는 새 탭 줄(단일 토큰 `host[:port][/path]`는 URL로 읽는다 — §2), 사라진 부모.
 
 ## 6. 실행 순서 — 만들기 → 배치 → 갱신 → 지우기
 
@@ -186,7 +192,7 @@ desired 구조(창별 탭 순서·그룹 멤버십, 폴더별 자식 순서)를 
 | `Tab` / `S-Tab` | 들여쓰기 / 내어쓰기 |
 | `g?` | 도움말 |
 
-- **확인창**: `y` `Y` `o` `O` `<CR>` 적용, `n` `N` `q` `<Esc>` 취소. 액션을 종류별로 묶어 보여주고 삭제 수를 맨 위에 빨갛게.
+- **확인창**: `y` `Y` `o` `O` `<CR>` 적용, `n` `N` `q` `<Esc>` 취소. 액션을 종류별로 묶어 보여주고 삭제 수를 맨 위에 빨갛게 — 닫는 탭, 지우는 북마크, 지우는 폴더(하위 폴더 포함)를 하나씩 센다.
 - **라이브 갱신**: tabs·windows·tabGroups·bookmarks 이벤트가 오면, 버퍼가 마지막 렌더와 같을 때만 다시 렌더한다(150ms 디바운스, 커서는 같은 앵커 줄로). 수정 중이면 상태줄에 `⟳ chrome changed — :e! to reload`.
 - 테마: gruvbox dark, `JetBrainsMono Nerd Font, JetBrains Mono, ui-monospace, Menlo`.
 
@@ -265,7 +271,7 @@ scripts/record.mjs       스크립트 데모 → demo/demo.gif
 
 ### 알려진 결함 (프로토타입, 미수정)
 
+- 편집 중 바깥에서, 지울 폴더 밖으로 옮긴 북마크는 지워지지 않고 남는다 — 무엇을 지울지는 S의 트리로 정하고 `removeTree`는 지금 트리에 건다.
 - 폴더·창·그룹 줄에서 `cc` 후 비우면 빈 entry로 읽혀 쓰기가 거부된다(손실은 없음).
 - 앵커 바로 뒤에서 `<CR>`로 줄을 나누면 내용이 앵커 없는 새 줄로 가서 복사본 탭이 생긴다.
-- `localhost:3000`은 스킴 `localhost:`로 읽힌다.
 - 접기 상태가 라이브 갱신·쓰기 후에 풀린다.

@@ -7,6 +7,7 @@ import { after, before, test } from 'node:test';
 import { launch } from './helpers.mjs';
 import { RESEARCH, STANDARD, keysOf, scenario } from './lib.mjs';
 import { block, del, delBlock, insertAfter, lineOf, moveLine, reindent, replaceLine } from '../unit/fixtures.js';
+import { deletionCount } from '../../src/core/plan.js';
 
 let h;
 before(async () => { h = await launch({ name: 'core' }); });
@@ -98,6 +99,26 @@ test('G6: new tab lines (typed URLs)', async () => {
     edit: (t, K) => insertAfter(t, K('codemirror'), [`  ${h.url('fresh1')}`, `  Fresh Two ${h.url('fresh2')}`]),
     expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', 'fresh1', 'fresh2']], bookmarks: BM },
   });
+});
+
+test('a new tab line `localhost:<port>` opens http://localhost:<port>/', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', `http://localhost:${port}/`]], bookmarks: BM },
+  });
+  assert.equal(r.plan.actions[0].url, `http://localhost:${port}`);
+});
+
+test('a new tab line `localhost:<port>/path` and `127.0.0.1:<port>/path` open the page over http', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}/p/lh`, `  127.0.0.1:${port}/p/ip`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', 'lh', 'ip']], bookmarks: BM },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.url), [`http://localhost:${port}/p/lh`, `http://127.0.0.1:${port}/p/ip`]);
 });
 
 test('new tab inserted in the MIDDLE of a window lands at that position', async () => {
@@ -383,6 +404,19 @@ test('G16: delete the folder line only → children move up, folder removed', as
   });
 });
 
+test('the deletion count of a nested delete is what Chrome actually removed', async () => {
+  const MID = { folder: 'Mid', children: [{ folder: 'Sub', children: [['X', 'x'], ['Y', 'y']] }] };
+  await fresh({ windows: STANDARD.windows, bookmarks: bm({ bar: [DEV(GITHUB, MDN, MID), LATER()] }) });
+  // the Dev line goes (GitHub, MDN and Mid move up to the bar) and the Sub block (Sub, X, Y) goes with it
+  const r = await scenario(h, {
+    edit: (t, K) => delBlock(del(t, K.title('Dev')), K.title('Sub')),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, { folder: 'Mid', children: [] }, LATER()] }) },
+  });
+  const nodes = (snap) => { let n = 0; const walk = (x) => { n++; (x.children || []).forEach(walk); }; snap.bookmarks.forEach((r) => (r.children || []).forEach(walk)); return n; };
+  assert.equal(nodes(r.before.snapshot) - nodes(r.after.snapshot), 4); // Dev, Sub, X, Y
+  assert.equal(deletionCount(r.plan.actions), 4);
+});
+
 test('G17: rename a bookmark', async () => {
   await fresh();
   await scenario(h, {
@@ -505,6 +539,17 @@ test('G23b: move a window block under the bookmark bar → window closed, folder
   await scenario(h, {
     edit: (t, K) => insertAfter(delBlock(t, K.win(2)), K.title('Read later'), reindent(block(t, K.win(2)), 2)),
     expected: { windows: [STANDARD.windows[0]], bookmarks: bm({ bar: [DEV(GITHUB, MDN), LATER(), { folder: 'Window 2', children: [['Tmux', 'tmux'], ['Codemirror', 'codemirror']] }] }) },
+  });
+});
+
+test('copy a group block under a bookmark folder → new folder titled without the [color], bookmarks from its tabs, group kept', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => insertAfter(t, K.title('Read later'), reindent(block(t, K.title('Research')), 2)),
+    expected: {
+      windows: STANDARD.windows,
+      bookmarks: bm({ bar: [DEV(GITHUB, MDN), LATER({ folder: 'Research', children: [['Attention', 'attention'], ['Gpt3', 'gpt3']] })] }),
+    },
   });
 });
 
