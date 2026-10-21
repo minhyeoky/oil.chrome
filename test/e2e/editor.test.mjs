@@ -12,7 +12,7 @@ let pageErrors = [];
 before(async () => { h = await launch({ name: 'editor' }); });
 after(async () => { await h.close(); });
 afterEach(async () => {
-  if (page && !page.isClosed()) await h.call(async () => { for (const w of await chrome.windows.getAll()) if (w.type === 'popup' && w.tabs === undefined) { /* keeper */ } });
+  if (page && !page.isClosed()) await page.close(); // a failed test can leave its editor open, and the next one would only focus it
   assert.deepEqual(pageErrors, [], 'no uncaught errors in the editor page');
 });
 
@@ -56,6 +56,12 @@ async function write(answer = 'y') {
   assert.equal(await page.locator('.oil-modal').count(), 0, 'no "applied with problems" notice');
 }
 async function seedAndOpen(spec = STANDARD) { await h.seed(spec); await openEditor(); }
+/** folded blocks (placeholders in the DOM) and the text that is still on screen */
+const folds = async () => ({ count: await page.locator('.oil-fold').count(), shown: await page.locator('.cm-content').innerText() });
+const externalTab = (name) => h.call(async ({ url }) => {
+  const w = (await chrome.windows.getAll({ populate: true })).filter((x) => x.type === 'normal').sort((a, b) => a.id - b.id)[1];
+  await chrome.tabs.create({ windowId: w.id, url, active: false });
+}, { url: h.url(name) });
 const state = () => h.settledState();
 const ids = () => h.call(async () => {
   const tabs = await chrome.tabs.query({});
@@ -196,6 +202,40 @@ test('x and dw at the name start edit the name; the anchor is untouched', async 
   await keys('u');
   await keys('u');
   assert.match(await text(), /\/t\d+ Oil http/);
+  await closeEditor();
+});
+
+test('Enter right after the anchor leaves an empty line above; the tab keeps its anchor and :w creates no copy', async () => {
+  await seedAndOpen();
+  const before = { ids: await ids(), state: await state() };
+  await goto('Oil');
+  await keys('i');
+  await press('Enter');
+  const insert = await page.evaluate(() => { const v = window.oil.view; const h = v.state.selection.main.head; const l = v.state.doc.lineAt(h); return { before: v.state.sliceDoc(l.from, h), after: v.state.sliceDoc(h, l.to) }; });
+  assert.match(insert.before, /^ {2}\/t\d+ $/, 'the cursor is behind the anchor of the moved line');
+  assert.match(insert.after, /^Oil http/, 'and on the first character of its content');
+  await press('Escape');
+  const lines = (await text()).split('\n');
+  const i = lines.findIndex((l) => /^ {2}\/t\d+ Oil http/.test(l));
+  assert.ok(i > 0, 'the tab line keeps its anchor');
+  assert.equal(lines[i - 1], '', 'an empty line is left above');
+  assert.equal(lines.filter((l) => /Oil http/.test(l)).length, 1, 'no unanchored copy of the content');
+  assert.deepEqual(await page.evaluate(() => window.oil.plan().actions), [], 'nothing to apply');
+  await keys(':w'); await press('Enter');
+  await page.waitForFunction(() => /no changes/.test(document.querySelector('.oil-s-msg').textContent));
+  assert.equal(await page.locator('.oil-modal').count(), 0, 'no confirmation: there is nothing to confirm');
+  assert.deepEqual(await state(), before.state);
+  assert.deepEqual(await ids(), before.ids, 'the tab kept its identity');
+  await closeEditor();
+});
+
+test('Enter in the middle of a title still splits the line', async () => {
+  await seedAndOpen();
+  await goto('Oil');
+  await keys('li');
+  await press('Enter');
+  await press('Escape');
+  assert.match(await text(), /^ {2}\/t\d+ O\nil http/m);
   await closeEditor();
 });
 
@@ -392,6 +432,102 @@ test('za folds a window block, zR opens all', async () => {
   assert.ok((await page.locator('.oil-fold').count()) >= 3);
   await keys('zR');
   assert.equal(await page.locator('.oil-fold').count(), 0);
+  await closeEditor();
+});
+
+test('folds survive a live refresh: the folder lines are found again by their anchors', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('zc');
+  await goto('Research');
+  await keys('zc');
+  let f = await folds();
+  assert.equal(f.count, 2);
+  assert.ok(!/GitHub|Attention/.test(f.shown) && /Neovim/.test(f.shown), 'two blocks hidden, the rest visible');
+  await externalTab('external1');
+  await page.waitForFunction(() => /External1/.test(window.oil.text()), null, { timeout: 8000 });
+  await page.waitForFunction(() => document.querySelectorAll('.oil-fold').length === 2);
+  f = await folds();
+  assert.ok(!/GitHub|MDN|Attention|Gpt3/.test(f.shown), 'still folded after the refresh');
+  assert.match(f.shown, /Neovim/, 'the rest of the buffer is shown');
+  assert.match(f.shown, /External1/, 'and so is the new tab');
+  await keys('zR');
+  assert.equal((await folds()).count, 0);
+  await externalTab('external2');
+  await page.waitForFunction(() => /External2/.test(window.oil.text()), null, { timeout: 8000 });
+  assert.equal((await folds()).count, 0, 'folds that were opened stay open');
+  await closeEditor();
+});
+
+test('folds survive :w', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('zc');
+  await goto('Hn');
+  await keys('dd');
+  assert.equal((await folds()).count, 1);
+  await write();
+  const f = await folds();
+  assert.equal(f.count, 1, 'the folder is still folded after the write');
+  assert.ok(!/GitHub|MDN/.test(f.shown) && /Read later/.test(f.shown));
+  await keys('zR');
+  assert.match(await page.locator('.cm-content').innerText(), /GitHub/);
+  await closeEditor();
+});
+
+test('folds survive :e!, which also takes the unwritten edit back', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('zc');
+  await goto('Hn');
+  await keys('dd');
+  assert.ok(await page.evaluate(() => window.oil.isDirty()));
+  await keys(':e!'); await press('Enter');
+  await page.waitForFunction(() => !window.oil.isDirty());
+  await idle();
+  const f = await folds();
+  assert.equal(f.count, 1, 'the folder is still folded after the reload');
+  assert.ok(!/GitHub|MDN/.test(f.shown), 'its children stay hidden');
+  assert.match(f.shown, /Hn http/, 'the deleted line is back');
+  await closeEditor();
+});
+
+test('a folded folder that loses its children outside is not folded again; the other folds are', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('zc');
+  await goto('Research');
+  await keys('zc');
+  assert.equal((await folds()).count, 2);
+  await h.call(async () => {
+    const dev = (await chrome.bookmarks.search({ title: 'Dev' })).find((n) => !n.url);
+    for (const c of await chrome.bookmarks.getChildren(dev.id)) await chrome.bookmarks.remove(c.id);
+  });
+  await page.waitForFunction(() => !/GitHub/.test(window.oil.text()), null, { timeout: 8000 });
+  const f = await folds();
+  assert.equal(f.count, 1, 'only the group is folded again');
+  assert.ok(!/Attention|Gpt3/.test(f.shown), 'the group stays folded');
+  assert.match(f.shown, /Dev\//, 'the childless folder line is shown');
+  assert.deepEqual(pageErrors, [], 'refolding did not throw');
+  await closeEditor();
+});
+
+test('a fold that would hide the cursor is not restored; the other folds are', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('zc');
+  await goto('Window 2');
+  await keys('zc');
+  await goto('Hn');
+  await h.call(async () => {
+    const [w1, w2] = (await chrome.windows.getAll({ populate: true })).filter((x) => x.type === 'normal').sort((a, b) => a.id - b.id);
+    await chrome.tabs.move(w1.tabs.find((t) => /\/p\/hn/.test(t.url)).id, { windowId: w2.id, index: -1 });
+  });
+  await page.waitForFunction(() => { const t = window.oil.text().split('\n'); return t.findIndex((l) => /Hn http/.test(l)) > t.findIndex((l) => /Window 2/.test(l)); }, null, { timeout: 8000 });
+  const f = await folds();
+  assert.equal(f.count, 1, 'window 2 stays open because the cursor line moved into it, Dev is folded again');
+  assert.ok(!/GitHub|MDN/.test(f.shown), 'Dev is the block that is folded');
+  assert.match(f.shown, /Hn http/, 'the cursor line is on screen');
   await closeEditor();
 });
 

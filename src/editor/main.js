@@ -81,7 +81,7 @@ const cursorKey = () => {
   return a ? `${a.kind}${a.id}` : null;
 };
 
-/** (Re)read Chrome, render, and replace the whole editor state (undo history reset; vim registers persist). */
+/** (Re)read Chrome, render, and replace the whole editor state (undo history reset; vim registers and folds persist). */
 async function load({ keepCursor = false } = {}) {
   const snapshot = await readSnap();
   const { text, lines } = render(snapshot);
@@ -101,7 +101,9 @@ async function load({ keepCursor = false } = {}) {
   const pos = line.from + (a ? a.a1 : /^[ \t]*/.exec(line.text)[0].length);
   const state = EditorState.create({ doc, selection: EditorSelection.cursor(pos), extensions });
   app.doc = state.doc;
+  const folded = foldedAnchors();
   app.view.setState(state);
+  refold(folded);
   if (keepCursor) {
     app.view.scrollDOM.scrollTop = scrollTop;
     app.view.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'nearest', yMargin: 40 }) });
@@ -277,6 +279,31 @@ function foldRangeAt(lineNumber) {
     end = n;
   }
   return end > lineNumber ? { from: line.to, to: state.doc.line(end).to, start: lineNumber } : null;
+}
+
+/** The anchors of the folder lines that are folded right now (folds belong to the view, so a new document drops them). */
+function foldedAnchors() {
+  const { state } = app.view;
+  const keys = new Set();
+  foldedRanges(state).between(0, state.doc.length, (from) => {
+    const a = anchorSpan(state.doc.lineAt(from).text);
+    if (a) keys.add(`${a.kind}${a.id}`);
+  });
+  return keys;
+}
+
+/** Fold again the lines of the new document that carry one of these anchors, if they are still folder lines with children. */
+function refold(keys) {
+  if (!keys.size) return;
+  const { state } = app.view;
+  const effects = [];
+  for (let n = 1; n <= state.doc.lines; n++) {
+    const a = anchorSpan(state.doc.line(n).text);
+    const r = a && keys.has(`${a.kind}${a.id}`) ? foldRangeAt(n) : null;
+    if (r) effects.push(foldEffect.of({ from: r.from, to: r.to }));
+  }
+  // with the selection in the transaction, CodeMirror unfolds a block the cursor ended up inside
+  if (effects.length) app.view.dispatch({ effects, selection: state.selection });
 }
 
 const isFolded = (range) => {
