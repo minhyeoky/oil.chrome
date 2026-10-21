@@ -46,7 +46,7 @@ bookmark folder becomes a bookmark and the tab closes; yank it first and the tab
 
 | Grammar | |
 |---|---|
-| `title url` or just `url` | tab / bookmark (a bare `example.com` also works for a new tab) |
+| `title url` or just `url` | tab / bookmark (a bare `example.com` also works for a new tab; `localhost:3000` gets `http://`, `example.com:8080` `https://`) |
 | `name/` | window, bookmark folder (`foo//` is a folder named `foo/`) |
 | `name [blue]/` | tab group; colors: grey blue red yellow green pink purple cyan orange |
 | indent | 2 spaces (a tab counts as 2); the parent is the nearest folder line above with a smaller indent |

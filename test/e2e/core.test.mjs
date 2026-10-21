@@ -5,8 +5,9 @@
 import assert from 'node:assert/strict';
 import { after, before, test } from 'node:test';
 import { launch } from './helpers.mjs';
-import { RESEARCH, STANDARD, scenario } from './lib.mjs';
+import { RESEARCH, STANDARD, keysOf, scenario } from './lib.mjs';
 import { block, del, delBlock, insertAfter, lineOf, moveLine, reindent, replaceLine } from '../unit/fixtures.js';
+import { deletionCount } from '../../src/core/plan.js';
 
 let h;
 before(async () => { h = await launch({ name: 'core' }); });
@@ -18,6 +19,7 @@ const DEV = (...kids) => ({ folder: 'Dev', children: kids });
 const LATER = (...kids) => ({ folder: 'Read later', children: kids });
 const GITHUB = ['GitHub', 'github'];
 const MDN = ['MDN', 'mdn'];
+const NO_BM = { bar: [], other: [] };
 
 // ── tabs ───────────────────────────────────────────────────────────────────
 test('E-baseline: no edit applies nothing and changes nothing', async () => {
@@ -97,6 +99,26 @@ test('G6: new tab lines (typed URLs)', async () => {
     edit: (t, K) => insertAfter(t, K('codemirror'), [`  ${h.url('fresh1')}`, `  Fresh Two ${h.url('fresh2')}`]),
     expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', 'fresh1', 'fresh2']], bookmarks: BM },
   });
+});
+
+test('a new tab line `localhost:<port>` opens http://localhost:<port>/', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', `http://localhost:${port}/`]], bookmarks: BM },
+  });
+  assert.equal(r.plan.actions[0].url, `http://localhost:${port}`);
+});
+
+test('a new tab line `localhost:<port>/path` and `127.0.0.1:<port>/path` open the page over http', async () => {
+  await fresh();
+  const { port } = h.server;
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), [`  localhost:${port}/p/lh`, `  127.0.0.1:${port}/p/ip`]),
+    expected: { windows: [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['tmux', 'codemirror', 'lh', 'ip']], bookmarks: BM },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.url), [`http://localhost:${port}/p/lh`, `http://127.0.0.1:${port}/p/ip`]);
 });
 
 test('new tab inserted in the MIDDLE of a window lands at that position', async () => {
@@ -286,6 +308,77 @@ test('pinned tab moved to another window stays pinned and first', async () => {
   });
 });
 
+test('a pinned tab deleted in the same write as a reorder of the unpinned tabs (the doomed pin still sits in front)', async () => {
+  await fresh({ windows: [[{ pin: 'neovim' }, { pin: 'tmux' }, 'oil', 'hn', 'codemirror']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(del(t, K('neovim')), K('codemirror'), K('tmux'), 2),
+    expected: { windows: [['*tmux', 'codemirror', 'oil', 'hn']], bookmarks: NO_BM },
+  });
+});
+
+test('a pinned tab opened outside between render and :w stays in front of the reordered unpinned tabs', async () => {
+  await fresh({ windows: [['neovim', 'oil', 'hn']], bookmarks: {} });
+  await scenario(h, {
+    edit: async (t, K) => {
+      await h.call(async ({ url }) => {
+        const win = (await chrome.windows.getAll()).find((w) => w.type === 'normal');
+        await chrome.tabs.create({ windowId: win.id, url, pinned: true, active: false });
+      }, { url: h.url('outside') });
+      return moveLine(t, K('hn'), K.win(1), 2);
+    },
+    expected: { windows: [['*outside', 'hn', 'neovim', 'oil']], bookmarks: NO_BM },
+  });
+});
+
+// ── windows emptied by an earlier step ─────────────────────────────────────
+test('swap the tab lines of two one-tab windows (each is emptied before it is refilled)', async () => {
+  await fresh({ windows: [['neovim'], ['tmux']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(moveLine(t, K('neovim'), K.win(2), 2), K('tmux'), K.win(1), 2),
+    expected: { windows: [['tmux'], ['neovim']], bookmarks: NO_BM },
+  });
+});
+
+test('a one-tab window hands its tab to a new window and takes a new tab in the same write', async () => {
+  await fresh({ windows: [['neovim']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => `${replaceLine(t, K('neovim'), `  ${h.url('fresh')}`)}\n\nmoved/\n  ${lineOf(t, K('neovim')).trim()}`,
+    expected: { windows: [['fresh'], ['neovim']], bookmarks: NO_BM },
+  });
+});
+
+test('rotate the tabs of three one-tab windows', async () => {
+  await fresh({ windows: [['neovim'], ['tmux'], ['oil']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(moveLine(moveLine(t, K('tmux'), K.win(1), 2), K('oil'), K.win(2), 2), K('neovim'), K.win(3), 2),
+    expected: { windows: [['tmux'], ['oil'], ['neovim']], bookmarks: NO_BM },
+  });
+});
+
+test('a window holding only a group sends the group to another window and is refilled by a tab from there', async () => {
+  await fresh({ windows: [[{ group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }], ['tmux', 'codemirror']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(insertAfter(delBlock(t, K.title('Papers')), K('codemirror'), block(t, K.title('Papers'))), K('tmux'), K.win(1), 2),
+    expected: { windows: [['tmux'], ['codemirror', { group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }]], bookmarks: NO_BM },
+  });
+});
+
+test('a tab closed in the same write rides out with its group, and the window it leaves is refilled', async () => {
+  await fresh({ windows: [['neovim'], [{ group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }]], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(del(insertAfter(delBlock(t, K.title('Papers')), K.win(1), block(t, K.title('Papers'))), K('gpt3')), K('neovim'), K.win(2), 2),
+    expected: { windows: [[{ group: 'Papers', color: 'red', tabs: ['attention'] }], ['neovim']], bookmarks: NO_BM },
+  });
+});
+
+test('swap the tabs of two windows while one of them also closes a tab', async () => {
+  await fresh({ windows: [['neovim', 'oil'], ['tmux']], bookmarks: {} });
+  await scenario(h, {
+    edit: (t, K) => moveLine(moveLine(del(t, K('oil')), K('neovim'), K.win(2), 2), K('tmux'), K.win(1), 2),
+    expected: { windows: [['tmux'], ['neovim']], bookmarks: NO_BM },
+  });
+});
+
 // ── bookmarks ──────────────────────────────────────────────────────────────
 test('G15a: delete a bookmark', async () => {
   await fresh();
@@ -309,6 +402,19 @@ test('G16: delete the folder line only → children move up, folder removed', as
     edit: (t, K) => del(t, K.title('Dev')),
     expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, LATER()] }) },
   });
+});
+
+test('the deletion count of a nested delete is what Chrome actually removed', async () => {
+  const MID = { folder: 'Mid', children: [{ folder: 'Sub', children: [['X', 'x'], ['Y', 'y']] }] };
+  await fresh({ windows: STANDARD.windows, bookmarks: bm({ bar: [DEV(GITHUB, MDN, MID), LATER()] }) });
+  // the Dev line goes (GitHub, MDN and Mid move up to the bar) and the Sub block (Sub, X, Y) goes with it
+  const r = await scenario(h, {
+    edit: (t, K) => delBlock(del(t, K.title('Dev')), K.title('Sub')),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, { folder: 'Mid', children: [] }, LATER()] }) },
+  });
+  const nodes = (snap) => { let n = 0; const walk = (x) => { n++; (x.children || []).forEach(walk); }; snap.bookmarks.forEach((r) => (r.children || []).forEach(walk)); return n; };
+  assert.equal(nodes(r.before.snapshot) - nodes(r.after.snapshot), 4); // Dev, Sub, X, Y
+  assert.equal(deletionCount(r.plan.actions), 4);
 });
 
 test('G17: rename a bookmark', async () => {
@@ -436,6 +542,17 @@ test('G23b: move a window block under the bookmark bar → window closed, folder
   });
 });
 
+test('copy a group block under a bookmark folder → new folder titled without the [color], bookmarks from its tabs, group kept', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => insertAfter(t, K.title('Read later'), reindent(block(t, K.title('Research')), 2)),
+    expected: {
+      windows: STANDARD.windows,
+      bookmarks: bm({ bar: [DEV(GITHUB, MDN), LATER({ folder: 'Research', children: [['Attention', 'attention'], ['Gpt3', 'gpt3']] })] }),
+    },
+  });
+});
+
 test('a bookmark folder dropped into another folder (move-folder)', async () => {
   await fresh();
   await scenario(h, {
@@ -495,6 +612,37 @@ test('deletions are journaled in chrome.storage.local before they happen (folder
   const dev = journal[0].bookmarks[0];
   assert.equal(dev.title, 'Dev');
   assert.deepEqual(dev.children.map((c) => [c.title, c.url.split('/').pop()]), [['GitHub', 'github'], ['MDN', 'mdn']]);
+});
+
+test('the journal records a closed tab as it is when the write runs, not as the buffer showed it', async () => {
+  await fresh();
+  const { text, snapshot } = await h.render();
+  const K = keysOf(text);
+  await h.call(async ({ url }) => { // the tab navigates after the buffer was rendered
+    await chrome.tabs.update((await chrome.tabs.query({})).find((t) => t.url.endsWith('/p/hn')).id, { url });
+  }, { url: h.url('hn2') });
+  await h.settledState();
+  const { report } = await h.applyText(snapshot, del(text, K('hn')));
+  assert.deepEqual(report.errors, []);
+  const journal = await h.call(async () => (await chrome.storage.local.get('journal')).journal);
+  assert.deepEqual(journal[0].tabs.map((t) => [t.url.split('/').pop(), t.title]), [['hn2', 'Hn2']]);
+});
+
+test('a tab ungrouped ahead of closing rejoins its group when an error skips the deletes', async () => {
+  await fresh();
+  const { text, snapshot } = await h.render();
+  const K = keysOf(text);
+  const edited = insertAfter(del(text, K('gpt3')), K('codemirror'), [`  ${h.url('fresh')}`]); // close gpt3, open a tab in window 2
+  const report = await h.call(async ({ snapshot, text }) => {
+    const fresh = await OilCore.readSnapshot(chrome, { editorUrl: chrome.runtime.getURL('editor.html') });
+    const plan = OilCore.plan(snapshot, fresh, text);
+    const wins = (await chrome.windows.getAll()).filter((w) => w.type === 'normal').sort((a, b) => a.id - b.id);
+    await chrome.windows.remove(wins[1].id); // window 2 vanishes between the plan and the write
+    return OilCore.apply(chrome, plan);
+  }, { snapshot, text: edited }, { core: true });
+  assert.equal(report.skippedDeletes, true);
+  assert.ok(report.errors.length > 0);
+  assert.deepEqual((await h.settledState()).windows, [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn']]);
 });
 
 test('a group whose members all leave but is refilled by other tabs is recreated with its title and color', async () => {

@@ -18,6 +18,12 @@ export const NASTY_TITLES = [
   'folder/ name', ' / ', '[grey]/', 'mailto:me@example.com', 'Q&A:',
 ];
 
+/** Titles shaped like `host:port` next to real schemes: all must survive as names and titles. */
+export const HOST_PORT_TITLES = [
+  'localhost:3000', 'localhost:3000/', 'example.com:8080', '127.0.0.1:8080/x', 'a.b.com:80?q=1#f', 'LocalHost:3000', 'localhost:abc',
+  'tel:123', 'mailto:a@b.c', 'chrome://settings', 'http://localhost:3000/',
+];
+
 export function randomTitle(r) {
   if (r() < 0.55) return NASTY_TITLES[Math.floor(r() * NASTY_TITLES.length)];
   const pool = ['a', 'b', 'c', ' ', ' ', '/', '[', ']', ':', '\n', '\t', 'é', '日', '-', '.', 'x', 'y', '1'];
@@ -105,11 +111,18 @@ export function complexSnapshot() {
           t(10, 9, 'tail', 'file:///tmp/a b.txt'),
         ],
       },
-      { id: 202, focused: false, tabs: [t(20, 0, 'solo', 'https://solo.test/'), t(21, 1, 'x', 'javascript:void(0)')] },
+      {
+        id: 202, focused: false,
+        tabs: [
+          t(20, 0, 'solo', 'https://solo.test/'), t(21, 1, 'x', 'javascript:void(0)'),
+          t(22, 2, 'localhost:3000', 'http://localhost:3000/', { groupId: 11 }), t(23, 3, '127.0.0.1:8080/x', 'http://127.0.0.1:8080/x'),
+        ],
+      },
     ],
     groups: [
       { id: 9, windowId: 101, title: 'x [red]', color: 'red', collapsed: false },
       { id: 10, windowId: 101, title: '', color: 'blue', collapsed: true },
+      { id: 11, windowId: 202, title: 'example.com:8080', color: 'green', collapsed: false },
     ],
     bookmarks: [
       {
@@ -121,6 +134,11 @@ export function complexSnapshot() {
           { id: '15', title: '[grey]/', children: [] },
           { id: '16', title: '', children: [] },
           { id: '17', title: 'ends with url https://x.test/', url: 'https://y.test/p q' },
+          { id: '18', title: 'localhost:3000', children: [{ id: '19', title: 'example.com:8080', url: 'https://example.com:8080/' }] },
+          // stored without a scheme (another extension, or an older build of this one, wrote them like that)
+          { id: '22', title: 'Dev', url: 'localhost:3000' },
+          { id: '23', title: '', url: 'localhost:3000/' },
+          { id: '24', title: 'x', url: 'example.com:8080/' },
         ],
       },
       { id: '2', title: 'Other bookmarks', children: [] },

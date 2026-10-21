@@ -11,14 +11,29 @@ export const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', '
 const ANCHOR_RE = /^\/([wgtb])(\d+)(?: |$)/;
 const URL_TOKEN_RE = /^[A-Za-z][A-Za-z0-9+.\-]*:\S+$/;
 const COLOR_SUFFIX_RE = new RegExp(`(?:^|\\s)\\[(${GROUP_COLORS.join('|')})\\]$`);
-// a single bare token like `example.com` or `example.com/path` (new tab lines only)
-const BARE_HOST_RE = /^(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}(?::\d+)?(?:[/?#]\S*)?$/;
+const HOSTNAME = /(?:[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?\.)+[A-Za-z]{2,}/.source; // example.com
+const HTTP_HOST = /(?:[A-Za-z0-9-]+\.)*localhost|\d{1,3}(?:\.\d{1,3}){3}/.source; // localhost, app.localhost, 127.0.0.1
+const PATH = /(?:[/?#]\S*)?/.source;
+// a single bare token like `example.com`, `localhost` or `127.0.0.1:8080/path` (new tab lines only)
+const BARE_HOST_RE = new RegExp(`^(?:${HTTP_HOST}|${HOSTNAME})(?::\\d+)?${PATH}$`, 'i');
+// `localhost:3000` `example.com:8080`: a URL token whose "scheme" is a host and whose rest is a port
+const HOST_PORT_RE = new RegExp(`^(?:${HTTP_HOST}|${HOSTNAME}):\\d+${PATH}$`, 'i');
+const HTTP_HOST_RE = new RegExp(`^(?:${HTTP_HOST})(?:[:/?#]|$)`, 'i'); // opens over http, not https
 
 export const normalizeTitle = (s) => String(s ?? '').replace(/\s+/g, ' ').trim();
 export const normalizeUrl = (s) => String(s ?? '').trim().replace(/\s/g, '%20');
 
 export const isUrlToken = (tok) => URL_TOKEN_RE.test(tok);
 export const isBareHost = (tok) => BARE_HOST_RE.test(tok);
+
+const withHttp = (hostAndRest) => `${HTTP_HOST_RE.test(hostAndRest) ? 'http' : 'https'}://${hostAndRest}`;
+
+/**
+ * The URL to write into Chrome for a URL token: `localhost:3000` and `example.com:8080` have no real scheme and get the
+ * one a browser would give them; anything else is returned as is. Lines that were not edited are compared with the
+ * stored URL before this, so an entity stored under such a URL keeps its line.
+ */
+export const withScheme = (url) => (HOST_PORT_RE.test(url) ? withHttp(url) : url);
 
 export const anchorText = (kind, id) => `/${kind}${id} `;
 export const anchorKey = (a) => (a ? `${a.kind}${a.id}` : null);
@@ -87,5 +102,5 @@ export function splitGroupName(name) {
 export function bareHostUrl(line) {
   if (line.type !== 'entry' || line.url || !line.title) return null;
   if (/\s/.test(line.title)) return null;
-  return isBareHost(line.title) ? `https://${line.title}` : null;
+  return isBareHost(line.title) ? withHttp(line.title) : null;
 }
