@@ -56,17 +56,25 @@ export const nameOfUrl = (url) => {
 
 export async function launch({ headless = true, name = 'e2e', args = [] } = {}) {
   mkdirSync(TMP, { recursive: true });
-  const dir = mkdtempSync(resolve(TMP, `${name}-`));
-  const context = await chromium.launchPersistentContext(dir, {
-    channel: 'chromium',
-    headless,
-    args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`, ...args],
-    viewport: null,
-  });
-  let sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker', { timeout: 15000 }));
-  const extId = new URL(sw.url()).host;
   const server = await startServer();
   const code = await coreCode();
+  let dir;
+  let context;
+  let sw;
+  let extId;
+  /** Start the browser on a fresh throwaway profile with the extension loaded. */
+  const boot = async () => {
+    dir = mkdtempSync(resolve(TMP, `${name}-`));
+    context = await chromium.launchPersistentContext(dir, {
+      channel: 'chromium',
+      headless,
+      args: [`--disable-extensions-except=${DIST}`, `--load-extension=${DIST}`, ...args],
+      viewport: null,
+    });
+    sw = context.serviceWorkers()[0] || (await context.waitForEvent('serviceworker', { timeout: 15000 }));
+    extId = new URL(sw.url()).host;
+  };
+  await boot();
 
   const getSw = async () => {
     const live = context.serviceWorkers().find((w) => w.url().startsWith(`chrome-extension://${extId}/`));
@@ -98,16 +106,33 @@ export async function launch({ headless = true, name = 'e2e', args = [] } = {}) 
   const h = { context, extId, server, dir, call, close, url: server.url, editorUrl: `chrome-extension://${extId}/editor.html` };
 
   // A popup keeps the browser alive while a test closes every normal window; it is never listed (type !== normal).
-  await call(async () => { await chrome.windows.create({ type: 'popup', url: 'about:blank', focused: false, width: 200, height: 200 }); });
+  const keepAlive = () => call(async () => { await chrome.windows.create({ type: 'popup', url: 'about:blank', focused: false, width: 200, height: 200 }); });
+  await keepAlive();
 
   /** Close every normal window, drop all bookmarks, clear the journal. */
+  const clear = () => call(async () => {
+    for (const w of await chrome.windows.getAll()) if (w.type === 'normal') await chrome.windows.remove(w.id);
+    const tree = await chrome.bookmarks.getTree();
+    for (const root of tree[0].children) for (const c of root.children || []) await chrome.bookmarks.removeTree(c.id);
+    await chrome.storage.local.clear();
+  });
+  /**
+   * `clear()`, on a fresh browser when Chromium for Testing died on the way: it can crash (SIGSEGV) while windows are
+   * closed. Bare chrome.* calls reproduce it: a group holding its window's active tab moves to another window, the tab
+   * that was active there moves to the window the group left, and the window the group went to is closed first.
+   */
   h.reset = async () => {
-    await call(async () => {
-      for (const w of await chrome.windows.getAll()) if (w.type === 'normal') await chrome.windows.remove(w.id);
-      const tree = await chrome.bookmarks.getTree();
-      for (const root of tree[0].children) for (const c of root.children || []) await chrome.bookmarks.removeTree(c.id);
-      await chrome.storage.local.clear();
-    });
+    try {
+      await clear();
+    } catch (e) {
+      if (!/has been closed/.test(String(e))) throw e;
+      try { await context.close(); } catch { /* already gone */ }
+      rmSync(dir, { recursive: true, force: true });
+      await boot();
+      Object.assign(h, { context, extId, dir, editorUrl: `chrome-extension://${extId}/editor.html` });
+      await keepAlive();
+      await clear();
+    }
   };
 
   /**

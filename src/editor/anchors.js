@@ -7,6 +7,9 @@
 //     keep the identity;
 //   · an insertion inside or in front of an anchor (non-blank text) lands behind it; blank text in front of the
 //     anchor (`>>`, a blank line above) and whole lines put above (`P`) are untouched;
+//   · Enter right behind an anchor, before the first character of the content, breaks the line above the anchor
+//     instead: anchor and content go down together, an empty line stays above, and the content is never left on a
+//     line without an anchor (which `:w` would read as a copy);
 //   · an empty cursor never rests in [line start, anchor end): it moves to the anchor end, so `0` `^` `I` go to the
 //     first character of the name.
 
@@ -70,6 +73,11 @@ function filterChange(doc, fromA, toA, text) {
     const a0 = lf + a.a0;
     const a1 = lf + a.a1;
     if (fromA === toA) { // pure insertion
+      // Enter before the first character of the content: the break goes above the anchor, without auto-indent (the line
+      // keeps its own), so that anchor and content go down together and no content is left on a line without anchor
+      if (fromA === a1 && /^\n[ \t]*$/.test(text) && /\S/.test(line.text.slice(a.a1))) {
+        return [{ from: lf, to: lf, insert: '\n' }];
+      }
       if (fromA >= a1) continue;
       if (fromA <= a0 && /^\s*$/.test(text)) continue; // indentation, blank lines
       if (fromA === lf && text.endsWith('\n')) continue; // whole lines put above

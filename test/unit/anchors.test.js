@@ -2,6 +2,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { history, undo } from '@codemirror/commands';
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { anchorFilter, anchorSpan, constrainRange } from '../../src/editor/anchors.js';
 
@@ -209,4 +210,70 @@ test('a charwise deletion from mid-line across whole lines into an anchored line
   assert.ok(lines.some((x) => /^\s*\/t13 /.test(x)), 'the t13 line is untouched');
   assert.ok(!lines.some((x) => /\S\s+\/t\d+ /.test(x.replace(/^\s*\/t\d+ /, ''))), 'no anchor ends up in the middle of a line');
   assert.ok(lines[1].startsWith('  /t11 '), 'the first line keeps its anchor');
+});
+
+// ── Enter right after the anchor ────────────────────────────────────────────
+
+test('Enter right after the anchor (auto-indent included) leaves an empty line above; anchor and content move down together', () => {
+  const st = mk();
+  const a1 = st.doc.line(3).from + 7;
+  const out = apply(st, { changes: { from: a1, insert: '\n  ' }, selection: { anchor: a1 + 3 } });
+  assert.equal(out.doc.lines, st.doc.lines + 1);
+  assert.equal(out.doc.line(3).text, '');
+  assert.equal(out.doc.line(4).text, '  /t12 oil.nvim https://github.com/stevearc/oil.nvim');
+  assert.equal(out.selection.main.head, out.doc.line(4).from + 7, 'the cursor rests on the first character of the moved content');
+});
+
+test('Enter right after the anchor of a nested line drops the auto-indent of any depth', () => {
+  const st = mk();
+  const a1 = st.doc.line(4).from + 9;
+  for (const indent of ['', '  ', '    ', '      ']) {
+    const out = apply(st, { changes: { from: a1, insert: `\n${indent}` }, selection: { anchor: a1 + 1 + indent.length } });
+    assert.equal(out.doc.line(4).text, '', `indent ${indent.length}`);
+    assert.equal(out.doc.line(5).text, '    /t13 deep https://deep.test/', `indent ${indent.length}`);
+    assert.equal(out.selection.main.head, out.doc.line(5).from + 9, `indent ${indent.length}`);
+  }
+});
+
+test('Enter right after the anchor of a line with no indent, with the cursor mapped from the start state', () => {
+  const st = mk(DOC, 4); // on `/w1 `'s end, as a real Enter keeps the cursor there
+  const out = apply(st, { changes: { from: 4, insert: '\n' } });
+  assert.equal(out.doc.line(1).text, '');
+  assert.equal(out.doc.line(2).text, '/w1 Window 1/');
+  assert.equal(out.selection.main.head, out.doc.line(2).from + 4);
+});
+
+test('Enter elsewhere is unchanged: mid-content, at the line end, on an anchored line without content', () => {
+  const st = mk();
+  const l = st.doc.line(3);
+  const mid = apply(st, { changes: { from: l.from + 7 + 3, insert: '\n  ' } });
+  assert.equal(mid.doc.line(3).text, '  /t12 oil');
+  assert.equal(mid.doc.line(4).text, '  .nvim https://github.com/stevearc/oil.nvim');
+  const end = apply(st, { changes: { from: l.to, insert: '\n  ' } });
+  assert.equal(end.doc.line(3).text, l.text);
+  assert.equal(end.doc.line(4).text, '  ');
+  const empty = st.doc.line(5); // `  /t14 `
+  const below = apply(st, { changes: { from: empty.to, insert: '\n  ' } });
+  assert.equal(below.doc.line(5).text, '  /t14 ');
+  assert.equal(below.doc.line(6).text, '  ');
+  const blanks = apply(mk('  /t14   '), { changes: { from: 7, insert: '\n  ' } });
+  assert.equal(blanks.doc.line(1).text, '  /t14 ', 'blank-only content is no content');
+});
+
+test('text that merely starts with a line break at the anchor end is not an Enter and stays where it is', () => {
+  const st = mk();
+  const a1 = st.doc.line(3).from + 7;
+  const out = apply(st, { changes: { from: a1, insert: '\npasted' } });
+  assert.equal(out.doc.line(3).text, '  /t12 ');
+  assert.equal(out.doc.line(4).text, 'pastedoil.nvim https://github.com/stevearc/oil.nvim');
+});
+
+test('undo takes the moved line break away again', () => {
+  let st = EditorState.create({ doc: DOC, extensions: [history(), anchorFilter] });
+  const a1 = st.doc.line(3).from + 7;
+  st = st.update({ changes: { from: a1, insert: '\n  ' }, selection: { anchor: a1 + 3 }, userEvent: 'input' }).state;
+  assert.equal(st.doc.line(3).text, '');
+  let next = null;
+  assert.ok(undo({ state: st, dispatch: (tr) => { next = tr.state; } }));
+  assert.equal(next.doc.toString(), DOC);
 });
