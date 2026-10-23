@@ -14,7 +14,7 @@ let h;
 before(async () => { h = await launch({ name: 'anchorfuzz' }); });
 after(async () => { await h.close(); });
 
-// [keys, text typed after entering insert mode (null = stays in normal mode)]
+// [keys, text typed after entering insert mode (null = stays in normal mode)]; ^V is Ctrl-V
 const OPS = [
   ['dd'], ['yy'], ['p'], ['P'], ['x'], ['X'], ['dw'], ['db'], ['D'], ['J'], ['u'], ['.'], ['0'], ['^'], ['$'], ['w'], ['b'], ['e'],
   ['j'], ['j'], ['k'], ['k'], ['gg'], ['G'], ['>>'], ['<<'], ['dj'], ['dk'], ['d$'], ['d0'], ['dG'], ['dgg'], ['yj'], ['3dd'],
@@ -25,6 +25,8 @@ const OPS = [
   ['Vjgu'], ['VjgU'], ['Vjg~'], ['VjrX'], ['VGgU'], ['Vj~'], ['vjjgU'], ['gJ'], ['V}d'], ['V}y'], ['{'], ['}'],
   [':%s/t/T/g'], [':%s/1/22/g'], [':%s/^/> /'], [':%s/ /_/g'], [':g/Window/d'], [':2,3d'], [':%norm Atail'], [':%norm I-'],
   [':%norm x'], [':2,4m0'], [':t.'], [':%d'], [':%j'], [':2,3j'], [':%s/\\/\\//X/g'], [':%s/b/BB/g'], [':%s/w\\d/Z/g'],
+  ['^Vjd'], ['^Vjly'], ['^Vjjx'], ['^VjYP'], ['^VjD'], ['^VjX'], ['^Vj~'], ['^VjrX'], ['^Vj>'], ['^Vjc', 'blk'], ['^VjlC', 'eol'],
+  ['^VjI', 'ins'], ['^VjA', 'app'], ['^Vj$A', 'end'], ['^Vkhs', 'sub'], ['^VjR', 'abc'], ['^VjS', 'abc'],
 ];
 
 const violations = (text, selHead) => {
@@ -67,7 +69,10 @@ test(`anchor invariants survive ${N} random vim operations`, async () => {
       trail.push('⟨:e!⟩');
     }
     trail.push(keys + (typed ? `⟨${typed}⟩` : ''));
-    await page.keyboard.type(keys);
+    for (const [j, part] of keys.split('^V').entries()) {
+      if (j) await page.keyboard.press('Control+v');
+      if (part) await page.keyboard.type(part);
+    }
     if (keys.startsWith(':')) await page.keyboard.press('Enter');
     if (typed) { await page.keyboard.type(typed); await page.keyboard.press('Escape'); }
     await page.keyboard.press('Escape');
