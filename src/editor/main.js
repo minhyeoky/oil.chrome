@@ -81,7 +81,23 @@ const cursorKey = () => {
   return a ? `${a.kind}${a.id}` : null;
 };
 
-/** (Re)read Chrome, render, and replace the whole editor state (undo history reset; vim registers and folds persist). */
+/**
+ * Start vim's jump list over after the editor state was replaced. The list is global, and its marks hold offsets into the
+ * old document: one past the end of the new document makes the next jump motion (`gg` `G` `n`) throw and its key land
+ * in the buffer. A mark without an offset counts as deleted, but a deleted newest entry keeps the next jump from
+ * recording where it started (`''` `<C-o>`), so the list's 100 entries are filled with the cursor again.
+ */
+function restartJumps(before) {
+  if (before) for (const m of Object.values(before.marks || {})) m.offset = null;
+  const cm = getCM(app.view);
+  const jumps = Vim.getVimGlobalState_().jumpList;
+  if (cm && jumps) for (let i = 0; i < 100; i++) jumps.add(cm, cm.getCursor(), cm.getCursor());
+}
+
+/**
+ * (Re)read Chrome, render, and replace the whole editor state: the undo history and vim's state for the buffer (marks,
+ * `gv`, `.`, jumps) start over; vim registers, the last search and folds persist.
+ */
 async function load({ keepCursor = false } = {}) {
   const snapshot = await readSnap();
   const { text, lines } = render(snapshot);
@@ -102,7 +118,9 @@ async function load({ keepCursor = false } = {}) {
   const state = EditorState.create({ doc, selection: EditorSelection.cursor(pos), extensions });
   app.doc = state.doc;
   const folded = foldedAnchors();
+  const vimBefore = getCM(app.view);
   app.view.setState(state);
+  restartJumps(vimBefore);
   refold(folded);
   if (keepCursor) {
     app.view.scrollDOM.scrollTop = scrollTop;
