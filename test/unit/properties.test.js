@@ -119,6 +119,52 @@ test('anchor is read only at the start of the line, after the indent', () => {
   assert.equal(parseLine('   '), null);
 });
 
+test('an anchor that names a folder keeps its line a folder without the `/`', () => {
+  const asked = [];
+  const named = new Set(['w1', 'g5', 'b10']);
+  const isFolderKey = (k) => { asked.push(k); return named.has(k); };
+  const read = (raw, opts) => { const p = parseLine(raw, opts); return p.type === 'folder' ? `folder:${p.name}` : p.type; };
+  // named by the snapshot, whatever the kind
+  for (const [raw, expected] of [
+    ['/w1 ', 'folder:'], ['/w1 Whatever', 'folder:Whatever'], ['/w1 /', 'folder:'],
+    ['/g5 ', 'folder:'], ['/g5 Papers [red]', 'folder:Papers [red]'], ['/g5 [red]', 'folder:[red]'], ['  /g5 Re: ', 'folder:Re:'],
+    ['/b10 ', 'folder:'], ['/b10 Tools', 'folder:Tools'], ['/b10 Tools/', 'folder:Tools'], ['/b10 Tools//', 'folder:Tools/'],
+  ]) assert.equal(read(raw, { isFolderKey }), expected, raw);
+  // not named by it (an anchor the snapshot lacks, a bookmark, a tab): the line reads as if it had no anchor
+  for (const raw of ['/w99 Foo', '/g99 Foo', '/b99 Foo', '/b11 Foo', '/t12 Foo']) assert.equal(read(raw, { isFolderKey }), 'entry', raw);
+  for (const raw of ['/w99 ', '/g99 ', '/b99 ', '/b11 ', '/t12 ']) assert.equal(read(raw, { isFolderKey }), 'empty', raw);
+  assert.equal(read('/g99 Foo/', { isFolderKey }), 'folder:Foo', 'a `/` makes a folder whatever the anchor names');
+  assert.deepEqual([...new Set(asked)].sort(), ['b10', 'b11', 'b99', 'g5', 'g99', 't12', 'w1', 'w99'], 'asked with the full key, for every kind');
+  // without isFolderKey, `w` and `g` anchors name a folder and `b` and `t` anchors do not
+  assert.deepEqual(['/w1 ', '/g5 Foo', '/g99 Foo', '/b10 Foo', '/t12 Foo'].map((raw) => read(raw)), ['folder:', 'folder:Foo', 'folder:Foo', 'entry', 'entry']);
+  assert.deepEqual(['/b10 ', '/t12 '].map((raw) => read(raw)), ['empty', 'empty']);
+});
+
+test('still an entry with a URL token whatever its anchor names; anchorless lines do not depend on isFolderKey', () => {
+  const isFolderKey = () => true;
+  for (const raw of ['/w1 Win https://x.test/', '/g5 Papers https://x.test/', '/b10 Dev https://x.test/', '/b10 Re:/', '/g5 localhost:3000']) {
+    const p = parseLine(raw, { isFolderKey });
+    assert.equal(p.type, 'entry', raw);
+    assert.ok(p.url, raw);
+  }
+  for (const [raw, type] of [['Tools', 'entry'], ['Tools/', 'folder'], ['  Re: /', 'folder']]) {
+    assert.equal(parseLine(raw, { isFolderKey }).type, type, raw);
+  }
+});
+
+test('parseText with isFolderKey: the children of a folder line without its `/` stay its children', () => {
+  const text = ['/b1 Bar/', '  /b10 Tools', '    /b11 GitHub https://github.com/', '  /b13 ', '    /b14 Later https://l.test/'].join('\n');
+  const parentOf = (lines, i) => (lines[i].parent >= 0 ? lines[lines[i].parent].anchor.id : null);
+  const plain = parseText(text).lines;
+  assert.deepEqual([2, 4].map((i) => parentOf(plain, i)), ['1', '1'], 'without isFolderKey the entry lines are no parents');
+  const withS = parseText(text, { isFolderKey: (k) => k === 'b10' || k === 'b13' }).lines;
+  assert.deepEqual([1, 2, 3, 4].map((i) => parentOf(withS, i)), ['1', '10', '1', '13']);
+  // a stale group anchor is no folder: its members belong to the window, as under an anchorless line
+  const stale = ['/w1 Win/', '  /g99 Stale', '    /t2 B https://b.test/', '  /g5 Known', '    /t1 A https://a.test/'].join('\n');
+  const lines = parseText(stale, { isFolderKey: (k) => k === 'w1' || k === 'g5' }).lines;
+  assert.deepEqual([2, 4].map((i) => parentOf(lines, i)), ['1', '5']);
+});
+
 test('parent rule: nearest preceding folder with a smaller indent; entries are never parents', () => {
   const { lines } = parseText([
     'A/',

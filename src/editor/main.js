@@ -5,7 +5,7 @@ import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldCode } 
 import { EditorSelection, EditorState } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, keymap } from '@codemirror/view';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
-import { apply, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
+import { apply, folderKeyTest, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
 import { anchorExtensions, anchorSpan } from './anchors.js';
 import { showConfirm, showHelp, showNotice } from './confirm.js';
 import { marksExtensions, pokeStatus } from './marks.js';
@@ -58,7 +58,7 @@ const extensions = [
   indentUnit.of('  '),
   EditorView.contentAttributes.of({ spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', 'aria-label': 'oil.chrome outline' }),
   oilTheme,
-  ...anchorExtensions(),
+  ...anchorExtensions(ctx),
   ...marksExtensions(ctx),
   // the buffer became clean again (undo) while Chrome had changed: catch up
   EditorView.updateListener.of((u) => { if (u.docChanged && app.stale && !isDirty()) onChromeEvent(); }),
@@ -245,7 +245,7 @@ async function activate() {
   const { state } = app.view;
   const line = state.doc.lineAt(state.selection.main.head);
   const a = anchorSpan(line.text);
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(app.ix) });
   if (!a || !p) { flash('nothing to open on this line'); return; }
   const finish = (msg) => {
     if (isDirty()) flash(`${msg} — buffer modified, the editor stays open`);
@@ -287,7 +287,7 @@ async function activate() {
 function foldRangeAt(lineNumber) {
   const { state } = app.view;
   const line = state.doc.line(lineNumber);
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(app.ix) });
   if (!p || p.type !== 'folder') return null;
   let end = lineNumber;
   for (let n = lineNumber + 1; n <= state.doc.lines; n++) {

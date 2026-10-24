@@ -6,7 +6,7 @@
 // Entity keys: existing `w12` `t12` `g5` `b11`; entities the plan creates get `n1`, `n2`, … in document order.
 
 import { bareHostUrl, splitGroupName, withScheme } from './grammar.js';
-import { countBookmarks, indexSnapshot, windowItems } from './model.js';
+import { countBookmarks, folderKeyTest, indexSnapshot, windowItems } from './model.js';
 import { parseText } from './parse.js';
 
 const entityOf = (ix, key) => {
@@ -48,7 +48,8 @@ export function assignRoles(lines, rootSet, report = () => {}) {
 export function plan(baseSnapshot, freshSnapshot, text) {
   const S = indexSnapshot(baseSnapshot);
   const F = indexSnapshot(freshSnapshot);
-  const { lines } = parseText(text);
+  // a line whose anchor names a window, group or folder of S stays a folder without its `/` (DESIGN.md §2)
+  const { lines } = parseText(text, { isFolderKey: folderKeyTest(S) });
 
   const errors = [];
   const warnings = [];
@@ -483,7 +484,9 @@ export function plan(baseSnapshot, freshSnapshot, text) {
     desired.folders.push({ key: frec.key, isNew: frec.isNew, children: frec.children.map((r) => r.key) });
   }
 
-  // deletions in the bookmarks domain: only the outermost deleted folder is listed
+  // deletions in the bookmarks domain: only the outermost deleted folder is listed. removeTree acts on the live
+  // tree, so "outermost" and the tally follow F, not S: a deleted entity is its own action unless F has it in
+  // another deleted folder, and a deleted one moved in from outside goes with that folder
   const deleted = new Set();
   for (const [k, b] of S.bm) {
     if (b.isRoot || cands.has(k) || !inF(k)) continue;
@@ -491,29 +494,30 @@ export function plan(baseSnapshot, freshSnapshot, text) {
   }
   for (const k of deleted) {
     const b = S.bm.get(k);
-    if (b.parentKey && deleted.has(b.parentKey)) continue; // subsumed by the ancestor
+    const fp = F.bm.get(k).parentKey;
+    if (fp && deleted.has(fp)) continue; // subsumed by the ancestor
     if (!b.isFolder) {
       A.del.push({ kind: 'delete-bookmark', key: k, title: b.title, url: b.url, label: `✕ bookmark ${short(b.title || b.url)}` });
       continue;
     }
-    const gone = [];
-    const walk = (fk) => { for (const ck of S.bm.get(fk).childKeys) { gone.push(ck); if (S.bm.get(ck).isFolder) walk(ck); } };
-    walk(k);
-    // what removeTree takes with it: a child that stays (moved out, or gone already) keeps its subtree, and anything
-    // deleted below it is its own action, so the tally goes down through deleted folders only
+    // what removeTree takes with it: a child that stays is moved out first and keeps its subtree, and anything deleted
+    // below it is its own action, so the walk goes down through deleted folders only
     let count = 0;
     let folders = 0;
+    const taken = [];
     const tally = (fk) => {
-      for (const ck of S.bm.get(fk).childKeys) {
+      for (const ck of F.bm.get(fk).childKeys) {
         if (!deleted.has(ck)) continue;
-        if (S.bm.get(ck).isFolder) { folders++; tally(ck); } else count++;
+        taken.push(ck);
+        if (F.bm.get(ck).isFolder) { folders++; tally(ck); } else count++;
       }
     };
     tally(k);
-    // bookmarks added outside while editing would be wiped by removeTree
-    const fWalk = (fk) => (F.bm.get(fk)?.childKeys ?? []).some((ck) => !S.bm.has(ck) || (F.bm.get(ck).isFolder && fWalk(ck)));
+    // bookmarks added outside while editing would be wiped by removeTree; the walk skips a folder that stays,
+    // because it is moved out first
+    const fWalk = (fk) => F.bm.get(fk).childKeys.some((ck) => !S.bm.has(ck) || (deleted.has(ck) && fWalk(ck)));
     if (fWalk(k)) err(null, `folder "${b.title}" got new contents outside — :e! to reload`);
-    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, folders, known: [k, ...gone], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
+    A.del.push({ kind: 'delete-folder', key: k, title: b.title, count, folders, known: [k, ...taken], label: `✕ folder ${short(b.title || '(untitled)')} (${count} bookmark${count === 1 ? '' : 's'})` });
   }
 
   const actions = [

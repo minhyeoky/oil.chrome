@@ -7,15 +7,17 @@
 import { parseLine } from './grammar.js';
 
 /**
+ * `opts.isFolderKey(key)` tells whether an anchor names a folder, which keeps its line a folder once its `/` is gone
+ * (see parseLine); without it that holds for `w` and `g` anchors.
  * @returns {{ lines: Array<{ n:number, idx:number, raw:string, indent:number, anchor:object|null, type:string,
  *   name?:string, title?:string, url?:string|null, content:string, parent:number, children:number[] }> }}
  *   `n` is the 0-based text line number, `idx` the position in `lines` (blank lines are skipped).
  */
-export function parseText(text) {
+export function parseText(text, opts) {
   const lines = [];
   const stack = [];
   String(text).split('\n').forEach((raw, n) => {
-    const p = parseLine(raw);
+    const p = parseLine(raw, opts);
     if (!p) return;
     const L = { n, idx: lines.length, raw, ...p, parent: -1, children: [] };
     for (let i = stack.length - 1; i >= 0; i--) {

@@ -4,6 +4,7 @@
 //   anchor  := '/' kind id ' '         kind ∈ w g t b
 //   content := folder | entry | ''
 //   folder  := name '/'                (last token is not a URL and the line ends with '/')
+//            | name | ''               (the anchor names a window, group or folder of the base snapshot; no URL token)
 //   entry   := (title ' ')? url | title
 
 export const GROUP_COLORS = ['grey', 'blue', 'red', 'yellow', 'green', 'pink', 'purple', 'cyan', 'orange'];
@@ -45,8 +46,12 @@ export const ANCHOR_SOURCE = ANCHOR_RE.source;
  * Parse one raw buffer line. Returns null for blank lines.
  * { indent, anchor:{kind,id,len,start}|null, type:'folder'|'entry'|'empty', name?, title?, url?, content }
  *  - `indent` counts a tab as 2 columns; `anchor.start` is the string offset of the anchor in `raw`.
+ *  - An anchor that names a folder keeps its line a folder when the `/` is edited away (`cc` clears it): the line is a
+ *    folder unless its last token is a URL, its name is the content without one trailing `/`, and it is never `empty`.
+ *  - The grammar cannot know what an anchor names. `isFolderKey('b10')` answers for every kind (an anchor the base
+ *    snapshot does not have reads as no anchor); without it every `w` and `g` anchor names a folder, `b` and `t` none.
  */
-export function parseLine(raw) {
+export function parseLine(raw, { isFolderKey } = {}) {
   if (/^\s*$/.test(raw)) return null;
   const ws = /^[ \t]*/.exec(raw)[0];
   let indent = 0;
@@ -60,7 +65,9 @@ export function parseLine(raw) {
   }
   const content = rest.replace(/\s+$/, '').replace(/^\s+/, '');
   const line = { indent, anchor, content };
-  if (content === '') return { ...line, type: 'empty', title: '', url: null };
+  const folderAnchor = !!anchor
+    && (isFolderKey ? !!isFolderKey(anchorKey(anchor)) : anchor.kind === 'w' || anchor.kind === 'g');
+  if (content === '') return folderAnchor ? { ...line, type: 'folder', name: '' } : { ...line, type: 'empty', title: '', url: null };
   const last = content.slice(content.search(/\S+$/));
   if (isUrlToken(last)) {
     return {
@@ -73,6 +80,7 @@ export function parseLine(raw) {
   if (content.endsWith('/')) {
     return { ...line, type: 'folder', name: normalizeTitle(content.slice(0, -1)) };
   }
+  if (folderAnchor) return { ...line, type: 'folder', name: normalizeTitle(content) };
   return { ...line, type: 'entry', title: normalizeTitle(content), url: null };
 }
 

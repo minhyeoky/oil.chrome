@@ -2,10 +2,12 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { isUrlToken } from '../../src/core/grammar.js';
 import {
   EXAMPLE, S, baseSnapshot, block, del, delBlock, find, insertAfter, kinds, lineOf, linesOf, moveLine, ofKind,
   renderS, reindent, replaceLine, run,
 } from './fixtures.js';
+import { randomSnapshot } from './properties.helpers.js';
 
 const clean = (p) => {
   assert.deepEqual(p.errors, [], 'no errors');
@@ -557,4 +559,182 @@ test('editing a URL to a host:port navigates the tab / edits the bookmark with t
   assert.deepEqual(ofKind(p, 'navigate-tab').map((a) => a.to), ['https://example.com:8080']);
   assert.deepEqual(ofKind(p, 'edit-bookmark').map((a) => a.changes), [{ url: 'http://localhost:3000/x' }]);
   clean(p);
+});
+
+// ── folder lines keep their folder-ness by anchor (DESIGN.md §2) ────────────
+// `cc` `S` `C` `D` on a window, group or bookmark-folder line clear the `/` with the rest: the anchor says folder.
+// Tests titled "still" hold on the old grammar as well: they guard what must not change.
+
+const W1_ITEMS = ['t11', 't12', 'g5:t13,t14', 't15'];
+const children = (p, key) => p.desired.folders.find((f) => f.key === key).children;
+
+test('a bookmark folder line without its `/` is the rename the line with it is, and the children stay', () => {
+  const bare = run(replaceLine(EXAMPLE, 'b10', '  /b10 Tools'));
+  assert.deepEqual(kinds(bare), ['edit-folder']);
+  assert.deepEqual(bare.actions[0].changes, { title: 'Tools' });
+  assert.deepEqual(children(bare, 'b10'), ['b11', 'b12']);
+  clean(bare);
+  const slash = run(replaceLine(EXAMPLE, 'b10', '  /b10 Tools/'));
+  assert.deepEqual(slash.actions, bare.actions);
+  assert.deepEqual(slash.desired, bare.desired);
+});
+
+test('a bookmark folder line cleared by cc renames the folder to "" and keeps its children', () => {
+  const p = run(replaceLine(EXAMPLE, 'b10', '  /b10 '));
+  assert.deepEqual(kinds(p), ['edit-folder']);
+  assert.deepEqual(p.actions[0].changes, { title: '' });
+  assert.deepEqual(children(p, 'b10'), ['b11', 'b12']);
+  clean(p);
+  const empty = run(replaceLine(EXAMPLE, 'b13', '  /b13 '));
+  assert.deepEqual([kinds(empty), empty.actions[0].changes], [['edit-folder'], { title: '' }], 'a folder without children as well');
+  clean(empty);
+});
+
+test('a folder line written without its `/` is no rename when the name is the same', () => {
+  const p = run(replaceLine(EXAMPLE, 'b10', '  /b10 Dev'));
+  assert.deepEqual(p.actions, []);
+  clean(p);
+});
+
+test('a nested folder line cleared by cc keeps the block under it', () => {
+  const snap = baseSnapshot();
+  snap.bookmarks[0].children[0].children.push({
+    id: '14', title: 'Mid', children: [
+      { id: '15', title: 'Sub', children: [{ id: '16', title: 'X', url: 'https://x.test/' }] },
+      { id: '17', title: 'Y', url: 'https://y.test/' },
+    ],
+  });
+  const text = renderS(snap);
+  const cleared = run(replaceLine(text, 'b14', '    /b14 '), { base: snap, fresh: snap });
+  assert.deepEqual(kinds(cleared), ['edit-folder']);
+  assert.deepEqual([cleared.actions[0].key, cleared.actions[0].changes], ['b14', { title: '' }]);
+  assert.deepEqual([children(cleared, 'b10'), children(cleared, 'b14'), children(cleared, 'b15')], [['b11', 'b12', 'b14'], ['b15', 'b17'], ['b16']]);
+  clean(cleared);
+  const renamed = run(replaceLine(text, 'b15', '      /b15 Inner'), { base: snap, fresh: snap });
+  assert.deepEqual([kinds(renamed), renamed.actions[0].changes], [['edit-folder'], { title: 'Inner' }]);
+  assert.deepEqual(children(renamed, 'b15'), ['b16']);
+  clean(renamed);
+});
+
+test('a group line without its `/`: a bare title keeps the color, a ` [color]` suffix sets it, a cleared line empties the title', () => {
+  const title = run(replaceLine(EXAMPLE, 'g5', '  /g5 Reading'));
+  assert.deepEqual(kinds(title), ['edit-group']);
+  assert.deepEqual(title.actions[0].changes, { title: 'Reading' });
+  assert.deepEqual(winItems(title, 'w1'), W1_ITEMS);
+  clean(title);
+  const both = run(replaceLine(EXAMPLE, 'g5', '  /g5 Papers [red]'));
+  assert.deepEqual(kinds(both), ['edit-group']);
+  assert.deepEqual(both.actions[0].changes, { title: 'Papers', color: 'red' });
+  assert.deepEqual(both.actions[0].changes, run(replaceLine(EXAMPLE, 'g5', '  /g5 Papers [red]/')).actions[0].changes);
+  clean(both);
+  const cleared = run(replaceLine(EXAMPLE, 'g5', '  /g5 '));
+  assert.deepEqual(kinds(cleared), ['edit-group']);
+  assert.deepEqual(cleared.actions[0].changes, { title: '' });
+  assert.deepEqual(winItems(cleared, 'w1'), W1_ITEMS, 'the members stay in the group');
+  clean(cleared);
+  const same = run(replaceLine(EXAMPLE, 'g5', '  /g5 Research [blue]'));
+  assert.deepEqual(same.actions, []);
+});
+
+test('a window or bookmark root line cleared, or written without its `/`, is still that window or root: the name is ignored', () => {
+  for (const line of ['/w1 ', '/w1 Whatever', '/w1 Whatever/']) {
+    const p = run(replaceLine(EXAMPLE, 'w1', line));
+    assert.deepEqual(p.actions, [], line);
+    assert.deepEqual(winItems(p, 'w1'), W1_ITEMS, line);
+    clean(p);
+  }
+  for (const line of ['/b2 ', '/b2 Whatever']) {
+    const p = run(replaceLine(EXAMPLE, 'b2', line));
+    assert.deepEqual(p.actions, [], line);
+    assert.deepEqual(children(p, 'b2'), ['b20'], line);
+    clean(p);
+  }
+});
+
+test('still an entry without its `/`: a line with a URL token, a tab or bookmark anchor, or no anchor', () => {
+  // a URL token keeps the line an entry: Dev becomes a bookmark and the folder goes, as for any entry under a folder
+  const url = run(replaceLine(EXAMPLE, 'b10', '  /b10 Dev https://dev.test/'));
+  assert.deepEqual(ofKind(url, 'new-bookmark').map((a) => [a.title, a.url, a.parent]), [['Dev', 'https://dev.test/', 'b1']]);
+  assert.deepEqual(ofKind(url, 'delete-folder').map((a) => a.key), ['b10']);
+  assert.deepEqual(ofKind(url, 'edit-folder'), []);
+  // a bookmark anchor stays a bookmark: its line is a title edit, cleared it is an empty title
+  const bm = run(replaceLine(EXAMPLE, 'b11', '    /b11 Renamed'));
+  assert.deepEqual([kinds(bm), bm.actions[0].changes], [['edit-bookmark'], { title: 'Renamed' }]);
+  // a tab anchor stays a tab: no URL on the line, so a title edit only warns
+  const tab = run(replaceLine(EXAMPLE, 't12', '  /t12 Renamed'));
+  assert.deepEqual(tab.actions, []);
+  assert.deepEqual(tab.warnings.map((w) => w.message), ['title is read-only']);
+  // typed by hand, without an anchor: a name needs its `/`
+  const typed = run(insertAfter(EXAMPLE, 'b13', ['    Tools']));
+  assert.match(typed.errors[0].message, /needs a URL/);
+  assert.deepEqual(ofKind(run(insertAfter(EXAMPLE, 'b13', ['    Tools/'])), 'new-folder').map((a) => a.title), ['Tools']);
+});
+
+test('a stale w or g anchor without its `/` reads as the anchorless line does: no new group, no new window', () => {
+  // the anchors are not in S (a line yanked from an older render): without its `/` the line is not a folder line
+  const members = ['    https://m.test/'];
+  const group = run(insertAfter(EXAMPLE, 't22', ['  /g99 Papers', ...members]));
+  const groupTwin = run(insertAfter(EXAMPLE, 't22', ['  Papers', ...members]));
+  assert.deepEqual(group.errors.map((e) => e.message), groupTwin.errors.map((e) => e.message));
+  assert.match(group.errors[0].message, /cannot read a URL/);
+  assert.deepEqual(kinds(group), kinds(groupTwin));
+  assert.deepEqual(group.warnings.map((w) => w.message), ['unknown anchor /g99 — treated as new']);
+  const win = run(`/w99 Foo\n  https://m.test/\n\n${EXAMPLE}`);
+  const winTwin = run(`Foo\n  https://m.test/\n\n${EXAMPLE}`);
+  assert.deepEqual(win.errors.map((e) => e.message), winTwin.errors.map((e) => e.message));
+  assert.match(win.errors[0].message, /top-level entry/);
+  assert.deepEqual(kinds(win), kinds(winTwin));
+});
+
+test('still a new group with a stale anchor and its `/`: the warning says the anchor is unknown', () => {
+  const p = run(insertAfter(EXAMPLE, 't22', ['  /g99 Papers/', '    https://m.test/']));
+  assert.deepEqual([...kinds(p)].sort(), ['new-group', 'new-tab']);
+  assert.equal(ofKind(p, 'new-group')[0].title, 'Papers');
+  assert.deepEqual(p.warnings.map((w) => w.message), ['unknown anchor /g99 — treated as new']);
+  assert.deepEqual(p.errors, []);
+});
+
+test('a `/`-less b10 line meets an F that no longer has Dev: "gone — skipped", as with its `/`', () => {
+  const F = baseSnapshot();
+  F.bookmarks[0].children.shift(); // Dev, with GitHub and MDN, is closed outside while the buffer is open
+  for (const [bare, slash] of [['  /b10 Dev', '  /b10 Dev/'], ['  /b10 Tools', '  /b10 Tools/']]) {
+    const a = run(replaceLine(EXAMPLE, 'b10', bare), { fresh: F });
+    const b = run(replaceLine(EXAMPLE, 'b10', slash), { fresh: F });
+    assert.deepEqual([a.actions, a.errors, a.warnings], [b.actions, b.errors, b.warnings], bare);
+  }
+  const p = run(replaceLine(EXAMPLE, 'b10', '  /b10 Dev'), { fresh: F });
+  assert.deepEqual([p.actions, p.errors], [[], []]);
+  assert.ok(p.warnings.some((w) => w.message === 'gone — skipped' && w.line === lineNo(EXAMPLE, 'b10')));
+});
+
+test('moved under another kind of parent, a folder line without its `/` takes that parent\'s folder role as the line with it does', () => {
+  // the Research group line, `/` gone, copied under a bookmark folder: a new folder titled without ` [color]`
+  const copy = run(insertAfter(EXAMPLE, 'b13', ['    /g5 Research [blue]', '      /t13 Attention https://arxiv.org/abs/1706.03762']));
+  assert.deepEqual(ofKind(copy, 'new-folder').map((a) => [a.title, a.parent]), [['Research', 'b13']]);
+  assert.deepEqual(ofKind(copy, 'new-bookmark').map((a) => [a.title, a.parent === ofKind(copy, 'new-folder')[0].key]), [['Attention', true]]);
+  // the Window 2 line, `/` gone, copied under a bookmark folder: a new folder named after it
+  const win = run(insertAfter(EXAMPLE, 'b13', reindent(block(EXAMPLE, 'w2'), 4).map((l, i) => (i === 0 ? l.replace(/\/$/, '') : l))));
+  assert.deepEqual(ofKind(win, 'new-folder').map((a) => [a.title, a.parent]), [['Window 2', 'b13']]);
+  assert.deepEqual(ofKind(win, 'new-bookmark').length, 2);
+  clean(win);
+});
+
+test('render → parse → plan stays empty when every folder-kind line drops its `/` (names a URL token would swallow keep it)', () => {
+  const folderLike = /^(\s*\/[wgb]\d+ )(.*)\/$/;
+  let dropped = 0;
+  for (let seed = 1; seed <= 300; seed++) {
+    const snap = randomSnapshot(seed);
+    const text = renderS(snap).split('\n').map((l) => {
+      const m = folderLike.exec(l);
+      if (!m) return l;
+      const name = m[2].trimEnd(); // `Re: /` is the name `Re:` with the space that keeps it from reading as a URL
+      if (name.endsWith('/')) return l; // `foo//` is a name that ends with `/`
+      if (isUrlToken(name.slice(name.search(/\S*$/)))) return l; // `a:b` would read as a URL once the `/` is gone
+      dropped++;
+      return m[1] + name;
+    }).join('\n');
+    const p = run(text, { base: snap, fresh: snap });
+    assert.deepEqual([p.errors, p.warnings, p.actions], [[], [], []], `seed ${seed}\n${text}`);
+  }
+  assert.ok(dropped > 1000, `the property saw ${dropped} slash-less folder lines`);
 });

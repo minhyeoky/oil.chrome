@@ -204,6 +204,43 @@ test('G11: edit a group title and color', async () => {
   });
 });
 
+test('a group line written without its `/` renames the group and keeps its color', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} Reading`),
+    expected: { windows: [['neovim', 'oil', { group: 'Reading', color: 'blue', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-group']);
+});
+
+test('a group line without its `/` but with a ` [color]` suffix sets both title and color', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} Papers [red]`),
+    expected: { windows: [['neovim', 'oil', { group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+});
+
+test('a group line cleared by cc empties the title; the members stay in the group', async () => {
+  await fresh();
+  await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Research'), `  /${K.title('Research')} `),
+    expected: { windows: [['neovim', 'oil', { group: '', color: 'blue', tabs: ['attention', 'gpt3'] }, 'hn'], ['tmux', 'codemirror']], bookmarks: BM },
+  });
+});
+
+test('a stale group anchor without its `/` is no group line: the write is refused as for an anchorless line', async () => {
+  const st = await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => insertAfter(t, K('codemirror'), ['  /g99999 Papers', `    ${h.url('member')}`]),
+    expected: st,
+    allowErrors: true,
+  });
+  assert.equal(r.report.refused, true);
+  assert.match(r.plan.errors[0].message, /cannot read a URL/);
+  assert.ok(r.plan.warnings.some((w) => /unknown anchor \/g99999/.test(w.message)));
+});
+
 test('G12: delete the group line only → members ungrouped in place', async () => {
   await fresh();
   await scenario(h, {
@@ -433,6 +470,24 @@ test('rename a folder and change a bookmark URL', async () => {
   });
 });
 
+test('a bookmark folder line written without its `/` renames the folder; its children stay in it', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Dev'), `  /${K.title('Dev')} Tools`),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [{ folder: 'Tools', children: [GITHUB, MDN] }, LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-folder']);
+});
+
+test('a bookmark folder line cleared by cc renames the folder to an empty title; its children stay in it', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: (t, K) => replaceLine(t, K.title('Dev'), `  /${K.title('Dev')} `),
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [{ folder: '', children: [GITHUB, MDN] }, LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['edit-folder']);
+});
+
 test('G18: move a bookmark to another folder', async () => {
   await fresh();
   await scenario(h, {
@@ -598,6 +653,65 @@ test('external change between render and :w: gone entities are skipped, F-only t
   assert.ok(plan.warnings.some((w) => w.message === 'gone — skipped'));
   const st = await h.settledState();
   assert.deepEqual(st.windows, [['neovim', 'oil', RESEARCH('attention', 'gpt3')], ['tmux', 'outside']]);
+});
+
+// the outside change goes in `edit`: it runs between the render the buffer came from and the plan/apply of the write
+const moveOutside = (id, parentId) => h.call(async (a) => { await chrome.bookmarks.move(a.id, { parentId: a.parentId }); }, { id: id.slice(1), parentId: parentId.slice(1) });
+const countNodes = (snap) => { let n = 0; const walk = (x) => { n++; (x.children || []).forEach(walk); }; snap.bookmarks.forEach((r) => (r.children || []).forEach(walk)); return n; };
+
+test('a bookmark moved out of a deleted folder outside is deleted with the block, not left behind', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: async (t, K) => {
+      await moveOutside(K('github'), K.title('Read later')); // GitHub leaves Dev while the Dev block is being deleted
+      return delBlock(t, K.title('Dev'));
+    },
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['delete-folder', 'delete-bookmark']);
+  assert.equal(deletionCount(r.plan.actions), 3); // Dev, MDN, GitHub
+  assert.equal(countNodes(r.before.snapshot) - countNodes(r.after.snapshot), 3);
+});
+
+test('a bookmark moved into a deleted folder outside, its own line gone, goes with the folder', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: async (t, K) => {
+      await moveOutside(K('wikipedia'), K.title('Dev'));
+      return del(delBlock(t, K.title('Dev')), K('wikipedia'));
+    },
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [LATER()], other: [] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['delete-folder']);
+  assert.equal(deletionCount(r.plan.actions), 4); // Dev, GitHub, MDN, Wikipedia
+  assert.equal(countNodes(r.before.snapshot) - countNodes(r.after.snapshot), 4);
+});
+
+test('still moved back before the folder goes: a bookmark moved into a deleted folder outside whose line is kept', async () => {
+  await fresh();
+  const r = await scenario(h, {
+    edit: async (t, K) => {
+      await moveOutside(K('wikipedia'), K.title('Dev'));
+      return delBlock(t, K.title('Dev')); // Wikipedia's line still sits under Other bookmarks
+    },
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['move-bookmark', 'delete-folder']);
+  assert.equal(deletionCount(r.plan.actions), 3); // Dev, GitHub, MDN
+});
+
+test('a bookmark added outside in a folder that stays does not block deleting the folder it was in', async () => {
+  const MID = { folder: 'Mid', children: [['X', 'x']] };
+  await fresh({ windows: STANDARD.windows, bookmarks: bm({ bar: [DEV(GITHUB, MDN, MID), LATER()] }) });
+  const r = await scenario(h, {
+    edit: async (t, K) => {
+      const parentId = K.title('Mid').slice(1);
+      await h.call(async (a) => { await chrome.bookmarks.create({ parentId: a.parentId, title: 'Surprise', url: a.url }); }, { parentId, url: h.url('surprise') });
+      return del(t, K.title('Dev')); // only the Dev line goes: GitHub, MDN and Mid (with what is in it) move up to the bar
+    },
+    expected: { windows: STANDARD.windows, bookmarks: bm({ bar: [GITHUB, MDN, { folder: 'Mid', children: [['X', 'x'], ['Surprise', 'surprise']] }, LATER()] }) },
+  });
+  assert.deepEqual(r.plan.actions.map((a) => a.kind), ['move-bookmark', 'move-bookmark', 'move-folder', 'delete-folder']);
 });
 
 test('deletions are journaled in chrome.storage.local before they happen (folder subtree + closed tab)', async () => {

@@ -99,6 +99,22 @@ export function indexSnapshot(raw) {
   return { snap, windows, tabs, groups, bm, windowKeys, rootKeys };
 }
 
+/**
+ * `isFolderKey` for parseLine/parseText (DESIGN.md §2): whether an anchor key names a window, group or bookmark folder
+ * of this snapshot. Without a snapshot it is undefined, and parseLine reads every `w` and `g` anchor that way.
+ */
+export function folderKeyTest(ix) {
+  if (!ix) return undefined;
+  return (key) => {
+    switch (key[0]) {
+      case 'w': return ix.windows.has(key);
+      case 'g': return ix.groups.has(key);
+      case 'b': return !!ix.bm.get(key)?.isFolder;
+      default: return false;
+    }
+  };
+}
+
 /** Window contents as items in index order: ungrouped tabs and group blocks. */
 export function windowItems(ix, windowKey) {
   const win = ix.windows.get(windowKey);
