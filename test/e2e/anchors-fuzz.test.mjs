@@ -21,7 +21,7 @@ const OPS = [
   ['2p'], ['Vjd'], ['Vjy'], ['Vj>'], ['Vj<'], ['vlld'], ['ddp'], ['yyP'], ['~'], ['gUU'], ['guu'], ['rX'], ['r '], ['xp'], ['ddkP'],
   ['cc', 'abc'], ['S', 'new line'], ['C', 'tail'], ['cw', 'word'], ['o', 'below'], ['O', 'above'], ['i', 'ins'], ['a', 'app'],
   ['A', 'end'], ['I', 'start'], ['s', 'sub'], ['ciw', 'iw'], ['o', 'http://x.test/'], ['O', 'Group [red]/'], ['o', 'dir/'],
-  ['cc'], ['S'], ['C'], ['I', '\n'], ['cc', '\n'],
+  ['cc'], ['S'], ['C'], ['I', '\n'], ['cc', '\n'], ['Vc', 'abc'], ['Vjc', 'abc'], ['cj', 'abc'], ['VS', 'abc'],
   ['Vjgu'], ['VjgU'], ['Vjg~'], ['VjrX'], ['VGgU'], ['Vj~'], ['vjjgU'], ['gJ'], ['V}d'], ['V}y'], ['{'], ['}'],
   [':%s/t/T/g'], [':%s/1/22/g'], [':%s/^/> /'], [':%s/ /_/g'], [':g/Window/d'], [':2,3d'], [':%norm Atail'], [':%norm I-'],
   [':%norm x'], [':2,4m0'], [':t.'], [':%d'], [':%j'], [':2,3j'], [':%s/\\/\\//X/g'], [':%s/b/BB/g'], [':%s/w\\d/Z/g'],
