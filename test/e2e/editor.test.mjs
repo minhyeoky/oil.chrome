@@ -179,6 +179,95 @@ test('cc + text also keeps the identity (the hidden anchor survives the line cha
   await closeEditor();
 });
 
+test('cc on a folder line and a name without the `/` renames the folder in place: same folder, children stay', async () => {
+  await seedAndOpen();
+  const folderId = (title) => h.call(async ({ title }) => (await chrome.bookmarks.search({ title }))[0].id, { title });
+  const dev = await folderId('Dev');
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  assert.match(await text(), /^ {2}\/b\d+ Tools$/m);
+  await write();
+  assert.equal(await folderId('Tools'), dev, 'same folder id');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Tools', children: [['GitHub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('cc on a group line and a title with a ` [color]` suffix but no `/`: drawn as name and color, written as a rename', async () => {
+  await seedAndOpen();
+  await goto('Research');
+  await keys('cc');
+  await keys('Papers [red]');
+  await press('Escape');
+  const line = page.locator('.cm-line.oil-r-group');
+  assert.equal((await line.locator('.oil-name').innerText()).trim(), 'Papers');
+  assert.equal((await line.locator('.oil-gcolor').innerText()).trim(), '[red]');
+  assert.equal(await line.locator('.oil-slash').count(), 0, 'no `/` was typed, none is drawn');
+  await write();
+  assert.deepEqual((await state()).windows[0], ['neovim', 'oil', { group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }, 'hn']);
+  await closeEditor();
+});
+
+test('o under a group line whose `/` is gone starts a member one level in', async () => {
+  await seedAndOpen();
+  await goto('Research');
+  await keys('cc');
+  await keys('Reading');
+  await press('Escape');
+  await keys('o');
+  await keys(h.url('fresh'));
+  await press('Escape');
+  assert.match(await text(), /^ {4}http:\/\/127\.0\.0\.1:\d+\/p\/fresh$/m);
+  await write();
+  assert.deepEqual((await state()).windows[0], ['neovim', 'oil', { group: 'Reading', color: 'blue', tabs: ['fresh', 'attention', 'gpt3'] }, 'hn']);
+  await closeEditor();
+});
+
+test('a bookmark folder line without its `/` is still read as a folder: glyph, color, count, <CR> folds, o starts a member', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  const line = page.locator('.cm-line', { hasText: 'Tools' });
+  assert.match(await line.getAttribute('class'), /oil-r-bfolder/, 'syntax role');
+  assert.match(await line.locator('.oil-anchor').getAttribute('class'), /oil-a-folder/, 'glyph');
+  assert.match(await line.locator('.oil-marks').innerText(), /^· 2/, 'bookmark count');
+  await press('Enter'); // a folder line: toggle its fold (a bookmark would open, and this one has no URL)
+  await sleep(100);
+  assert.equal(await page.locator('.oil-fold').count(), 1);
+  await press('Enter');
+  await sleep(100);
+  assert.equal(await page.locator('.oil-fold').count(), 0);
+  await keys('o');
+  await keys(h.url('fresh'));
+  await press('Escape');
+  assert.match(await text(), /^ {4}http:\/\/127\.0\.0\.1:\d+\/p\/fresh$/m, 'one level in: a member of Tools');
+  await write();
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Tools', children: [['', 'fresh'], ['GitHub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('za folds the children of a folder line without its `/`; zM folds a bookmark root written without it', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  await keys('za');
+  assert.equal(await page.locator('.oil-fold').count(), 1);
+  assert.equal((await page.locator('.oil-fold').innerText()).trim(), '⋯ 2', 'its own two bookmarks, not the bar around it');
+  await keys('zR');
+  await goto('Other'); // the root "Other Bookmarks"
+  await keys('cc');
+  await keys('Others');
+  await press('Escape');
+  await keys('zM');
+  assert.equal(await page.locator('.oil-fold').count(), 4, 'both windows, the bar and Others');
+  await closeEditor();
+});
+
 test('0, ^ and I land on the first character of the name, never inside the anchor', async () => {
   await seedAndOpen();
   await goto('Oil');

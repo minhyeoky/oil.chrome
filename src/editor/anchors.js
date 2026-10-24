@@ -17,6 +17,7 @@ import { ChangeSet, EditorSelection, EditorState, StateField, Transaction } from
 import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
 import { indentService } from '@codemirror/language';
 import { ANCHOR_SOURCE, parseLine, splitGroupName } from '../core/grammar.js';
+import { folderKeyTest } from '../core/model.js';
 import { GROUP_COLOR_CSS, glyphSvg } from './glyphs.js';
 
 const ANCHOR_RE = new RegExp(ANCHOR_SOURCE);
@@ -222,9 +223,9 @@ class AnchorWidget extends WidgetType {
   ignoreEvent() { return false; }
 }
 
-/** What to draw over the anchor of a line. */
-export function anchorInfo(lineText, a) {
-  const p = parseLine(lineText);
+/** What to draw over the anchor of a line; `isFolderKey` as for parseLine. */
+export function anchorInfo(lineText, a, isFolderKey) {
+  const p = parseLine(lineText, { isFolderKey });
   const indent = a.a0;
   switch (a.kind) {
     case 'w': return { glyph: 'window' };
@@ -236,9 +237,10 @@ export function anchorInfo(lineText, a) {
   }
 }
 
-function buildAnchors(view) {
+function buildAnchors(view, ctx) {
   const ranges = [];
   const { doc } = view.state;
+  const isFolderKey = folderKeyTest(ctx.getIndex());
   let prevLine = -1;
   for (const { from, to } of view.visibleRanges) {
     let pos = from;
@@ -249,16 +251,16 @@ function buildAnchors(view) {
       prevLine = line.number;
       const a = anchorSpan(line.text);
       if (!a) continue;
-      ranges.push(Decoration.replace({ widget: new AnchorWidget(anchorInfo(line.text, a)) }).range(line.from + a.a0, line.from + a.a1));
+      ranges.push(Decoration.replace({ widget: new AnchorWidget(anchorInfo(line.text, a, isFolderKey)) }).range(line.from + a.a0, line.from + a.a1));
     }
   }
   return Decoration.set(ranges, true);
 }
 
-const anchorPlugin = ViewPlugin.fromClass(class {
-  constructor(view) { this.decorations = buildAnchors(view); }
+const anchorPlugin = (ctx) => ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = buildAnchors(view, ctx); }
 
-  update(u) { if (u.docChanged || u.viewportChanged) this.decorations = buildAnchors(u.view); }
+  update(u) { if (u.docChanged || u.viewportChanged) this.decorations = buildAnchors(u.view, ctx); }
 }, {
   decorations: (v) => v.decorations,
   provide: (p) => EditorView.atomicRanges.of((view) => view.plugin(p)?.decorations ?? Decoration.none),
@@ -279,14 +281,15 @@ const trailField = StateField.define({
 
 const indentOf = (text) => /^[ \t]*/.exec(text)[0].replace(/\t/g, '  ').length;
 
-const outlineIndent = indentService.of((ctx, pos) => {
-  const { doc } = ctx.state;
+const outlineIndent = (ctx) => indentService.of((cm, pos) => {
+  const { doc } = cm.state;
   const line = doc.lineAt(pos);
-  const trail = ctx.state.field(trailField, false);
+  const trail = cm.state.field(trailField, false);
   if (trail && trail.prev === line.number + 1 && trail.prev <= doc.lines) return indentOf(doc.line(trail.prev).text); // `O`
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(ctx.getIndex()) });
   const base = indentOf(line.text);
   return p && p.type === 'folder' ? base + 2 : base;
 });
 
-export const anchorExtensions = () => [trailField, anchorPlugin, anchorFilter, outlineIndent];
+/** @param ctx { getIndex(): indexSnapshot of the snapshot the buffer came from }: what the anchors of a line name */
+export const anchorExtensions = (ctx) => [trailField, anchorPlugin(ctx), anchorFilter, outlineIndent(ctx)];

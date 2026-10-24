@@ -85,3 +85,129 @@ test('dropping a group line only ungroups: it is not a deletion (G12)', () => {
   assert.deepEqual(kinds(g), ['move-tab', 'move-tab', 'remove-group']);
   assert.equal(deletionCount(g.actions), 0);
 });
+
+// ── bookmarks moved outside between render and :w ───────────────────────────
+// removeTree acts on the live tree (F), so what a delete-folder takes along, and whether a deleted entity needs an
+// action of its own, is read off F: a bookmark that sits elsewhere in F is not taken with the folder it used to be in.
+
+/** A copy of `snap` where bookmark `id` was moved, outside, to the end of folder `parentId`. */
+function moved(snap, id, parentId) {
+  const copy = JSON.parse(JSON.stringify(snap));
+  let node = null;
+  const take = (n) => (n.children || []).some((c, i) => {
+    if (c.id === id) { [node] = n.children.splice(i, 1); return true; }
+    return take(c);
+  });
+  const put = (n) => { if (n.id === parentId) { n.children.push(node); return true; } return (n.children || []).some(put); };
+  copy.bookmarks.some(take);
+  assert.ok(node && copy.bookmarks.some(put), `no bookmark ${id} / folder ${parentId}`);
+  return copy;
+}
+const noErrors = (p) => assert.deepEqual([p.errors, p.warnings], [[], []]);
+const DEV_BLOCK = delBlock(TEXT, 'b10'); // Dev, GitHub, MDN, Mid, Sub, X, Y, Z: 8 lines
+
+test('a bookmark moved out of a deleted folder outside is its own deletion; the folder tallies what is left in it', () => {
+  const F = moved(NESTED, '11', '13'); // GitHub: Dev → Read later
+  const p = go(DEV_BLOCK, F); // the Dev block still holds GitHub's line
+  assert.deepEqual(kinds(p), ['delete-folder', 'delete-bookmark']);
+  assert.deepEqual(ofKind(p, 'delete-bookmark').map((a) => a.key), ['b11']);
+  assert.deepEqual(folderActs(p), [['b10', 4, 2]]); // MDN X Y Z, Mid Sub
+  assert.match(p.actions[0].label, /\(4 bookmarks\)/);
+  assert.equal(deletionCount(p.actions), 8); // the 8 lines of the block, once each
+  noErrors(p);
+});
+
+test('a deleted folder moved out of a deleted folder outside is its own deletion with its own tally', () => {
+  const F = moved(NESTED, '14', '13'); // Mid (Sub X Y, Z): Dev → Read later
+  const p = go(DEV_BLOCK, F);
+  assert.deepEqual(kinds(p), ['delete-folder', 'delete-folder']);
+  assert.deepEqual(folderActs(p), [['b10', 2, 0], ['b14', 3, 1]]); // Dev: GitHub MDN. Mid: X Y Z, Sub
+  assert.equal(deletionCount(p.actions), 8);
+  noErrors(p);
+});
+
+test('a bookmark moved into a deleted folder outside, its own line gone, is deleted with the folder', () => {
+  const F = moved(NESTED, '20', '10'); // Wikipedia: Other bookmarks → Dev
+  const p = go(del(DEV_BLOCK, 'b20'), F);
+  assert.deepEqual(kinds(p), ['delete-folder']);
+  assert.deepEqual(folderActs(p), [['b10', 6, 2]]); // GitHub MDN X Y Z Wikipedia, Mid Sub
+  assert.ok(p.actions[0].known.includes('b20'), 'the re-check before removeTree must expect it');
+  assert.equal(deletionCount(p.actions), 9); // the 8 lines of the block and Wikipedia
+  noErrors(p);
+});
+
+test('still moved back and not deleted: a bookmark moved into a deleted folder outside whose line is kept', () => {
+  const F = moved(NESTED, '20', '10');
+  const p = go(DEV_BLOCK, F); // Wikipedia's line is still under Other bookmarks
+  assert.deepEqual(kinds(p), ['move-bookmark', 'delete-folder']);
+  assert.deepEqual([p.actions[0].key, p.actions[0].parent], ['b20', 'b2']);
+  assert.deepEqual(folderActs(p), [['b10', 5, 2]]);
+  assert.equal(deletionCount(p.actions), 8);
+  noErrors(p);
+});
+
+test('a deleted bookmark moved into another deleted folder outside is counted there, and has no action of its own', () => {
+  const F = moved(NESTED, '16', '13'); // X: Sub → Read later
+  const p = go(del(DEV_BLOCK, 'b13'), F); // the Dev block and the Read later line go
+  assert.deepEqual(kinds(p), ['delete-folder', 'delete-folder']);
+  assert.deepEqual(folderActs(p), [['b10', 4, 2], ['b13', 1, 0]]); // Dev: GitHub MDN Y Z, Mid Sub. Read later: X
+  assert.equal(deletionCount(p.actions), 9); // the 8 lines of the block and Read later
+  noErrors(p);
+});
+
+test('a deleted bookmark moved into a folder created outside is deleted there; the new folder stays', () => {
+  const F = moved(NESTED, '11', '13');
+  F.bookmarks[0].children[1].children.push({ id: '99', title: 'Outside', children: [F.bookmarks[0].children[1].children.shift()] });
+  const p = go(DEV_BLOCK, F); // GitHub now sits in "Outside" under Read later
+  assert.deepEqual(kinds(p), ['delete-folder', 'delete-bookmark']);
+  assert.deepEqual(ofKind(p, 'delete-bookmark').map((a) => a.key), ['b11']);
+  assert.deepEqual(folderActs(p), [['b10', 4, 2]]);
+  assert.equal(deletionCount(p.actions), 8);
+  noErrors(p);
+});
+
+/** The nested snapshot with a bookmark added, outside, to folder `folderId`. */
+function withSurprise(folderId) {
+  const copy = nestedSnapshot();
+  const put = (n) => {
+    if (n.id === folderId) { n.children.push({ id: '99', title: 'Surprise', url: 'https://surprise.test/' }); return true; }
+    return (n.children || []).some(put);
+  };
+  assert.ok(copy.bookmarks.some(put), `no folder ${folderId}`);
+  return copy;
+}
+const blocked = (title) => [`folder "${title}" got new contents outside — :e! to reload`];
+
+test('a bookmark added outside in a folder that stays does not block the delete: the folder moves out first', () => {
+  const p = go(del(TEXT, 'b10'), withSurprise('14')); // only the Dev line goes: GitHub, MDN and Mid (with Surprise) move up
+  assert.deepEqual(kinds(p), ['move-bookmark', 'move-bookmark', 'move-folder', 'delete-folder']);
+  assert.deepEqual(folderActs(p), [['b10', 0, 0]]);
+  noErrors(p);
+  // deeper: Dev and Mid go, Sub (with X, Y and Surprise) stays and moves up
+  const q = go(del(del(TEXT, 'b10'), 'b14'), withSurprise('15'));
+  assert.deepEqual(folderActs(q), [['b10', 0, 1]]);
+  noErrors(q);
+  // Sub is deleted on its own and refuses what was added in it; Dev, whose removeTree does not reach Sub, says nothing
+  const own = go(delBlock(del(TEXT, 'b10'), 'b15'), withSurprise('15'));
+  assert.deepEqual(own.errors.map((e) => e.message), blocked('Sub'));
+});
+
+test('still blocks: a bookmark added outside in a deleted folder, in a deleted subfolder of it, or in one deleted on its own', () => {
+  assert.deepEqual(go(DEV_BLOCK, withSurprise('10')).errors.map((e) => e.message), blocked('Dev'));
+  assert.deepEqual(go(DEV_BLOCK, withSurprise('15')).errors.map((e) => e.message), blocked('Dev')); // in Sub
+  const own = go(delBlock(del(TEXT, 'b10'), 'b15'), withSurprise('15')); // Dev line and Sub block go; Sub is a delete of its own
+  assert.ok(own.errors.some((e) => e.message === blocked('Sub')[0]));
+});
+
+test('still no plan error for a bookmark moved out of or into a deleted folder outside (only added content blocks)', () => {
+  noErrors(go(DEV_BLOCK, moved(NESTED, '11', '13')));
+  noErrors(go(del(DEV_BLOCK, 'b20'), moved(NESTED, '20', '10')));
+});
+
+test('known: a delete-folder expects the folder and what it takes along, not what is kept or moved out', () => {
+  const F = moved(NESTED, '11', '13'); // GitHub: Dev → Read later
+  const whole = go(DEV_BLOCK, F).actions.find((a) => a.key === 'b10');
+  assert.deepEqual([...whole.known].sort(), ['b10', 'b12', 'b14', 'b15', 'b16', 'b17', 'b18']); // not GitHub (b11)
+  const lineOnly = go(del(TEXT, 'b10')).actions.find((a) => a.key === 'b10'); // GitHub, MDN and Mid move up to the bar
+  assert.deepEqual(lineOnly.known, ['b10']);
+});
