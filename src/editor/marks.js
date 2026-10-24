@@ -9,6 +9,7 @@ import { Decoration, EditorView, GutterMarker, ViewPlugin, WidgetType, gutter, s
 import { codeFolding, foldService } from '@codemirror/language';
 import { getCM } from '@replit/codemirror-vim';
 import { GROUP_COLORS, parseLine, splitGroupName } from '../core/grammar.js';
+import { folderKeyTest } from '../core/model.js';
 import { parseText } from '../core/parse.js';
 import { assignRoles, plan, summaryText } from '../core/plan.js';
 import { anchorSpan } from './anchors.js';
@@ -21,8 +22,8 @@ const COLOR_SUFFIX = new RegExp(` ?\\[(?:${GROUP_COLORS.join('|')})\\]$`);
 
 function buildSyntax(view, ctx) {
   const { doc } = view.state;
-  const { lines } = parseText(doc.toString());
   const ix = ctx.getIndex();
+  const { lines } = parseText(doc.toString(), { isFolderKey: folderKeyTest(ix) });
   assignRoles(lines, new Set(ix ? ix.rootKeys : []));
   const out = [];
   for (const L of lines) {
@@ -42,12 +43,13 @@ function buildSyntax(view, ctx) {
     const ce = line.from + trimmed.length;
     if (cs >= ce) continue;
     if (L.type === 'folder') {
-      const nameEnd = ce - 1;
-      const suffix = L.role === 'group' ? COLOR_SUFFIX.exec(text.slice(0, trimmed.length - 1)) : null;
+      const slashed = trimmed.endsWith('/'); // an anchored folder line may have lost its `/`
+      const nameEnd = slashed ? ce - 1 : ce;
+      const suffix = L.role === 'group' ? COLOR_SUFFIX.exec(text.slice(0, nameEnd - line.from)) : null;
       const sfx = suffix ? line.from + suffix.index : nameEnd;
       if (sfx > cs) out.push(Decoration.mark({ class: 'oil-name' }).range(cs, sfx));
       if (suffix) out.push(Decoration.mark({ class: 'oil-gcolor' }).range(sfx, nameEnd));
-      out.push(Decoration.mark({ class: 'oil-slash' }).range(nameEnd, ce));
+      if (slashed) out.push(Decoration.mark({ class: 'oil-slash' }).range(nameEnd, ce));
     } else if (L.url) {
       const m = /\S+$/.exec(trimmed);
       const us = line.from + m.index;
@@ -136,8 +138,8 @@ function computePreview(view, ctx) {
     ctx.onPlanError?.(e);
     return { decos: Decoration.none, plan: null, summary: '', errors: 0, warnings: 0 };
   }
-  const { lines } = parseText(text);
   const ix = ctx.getIndex();
+  const { lines } = parseText(text, { isFolderKey: folderKeyTest(ix) });
   assignRoles(lines, new Set(ix ? ix.rootKeys : []));
   const byLine = new Map();
   const add = (n, item) => { if (!byLine.has(n)) byLine.set(n, []); byLine.get(n).push(item); };
@@ -210,10 +212,10 @@ const relativeNumbers = gutter({
 
 // ── folds ───────────────────────────────────────────────────────────────────
 
-const outlineFold = (state, from) => {
+const outlineFold = (ctx) => (state, from) => {
   const { doc } = state;
   const line = doc.lineAt(from);
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(ctx.getIndex()) });
   if (!p || p.type !== 'folder') return null;
   let end = line.number;
   for (let n = line.number + 1; n <= doc.lines; n++) {
@@ -225,8 +227,8 @@ const outlineFold = (state, from) => {
   return end > line.number ? { from: line.to, to: doc.line(end).to } : null;
 };
 
-const foldExtensions = [
-  foldService.of(outlineFold),
+const foldExtensions = (ctx) => [
+  foldService.of(outlineFold(ctx)),
   codeFolding({
     preparePlaceholder: (state, range) => state.doc.lineAt(range.to).number - state.doc.lineAt(range.from).number,
     placeholderDOM: (view, onclick, prepared) => {
@@ -377,7 +379,7 @@ export function marksExtensions(ctx) {
     previewField,
     previewPlugin(ctx),
     relativeNumbers,
-    foldExtensions,
+    foldExtensions(ctx),
     showPanel.of(statusPanel(ctx)),
   ];
 }

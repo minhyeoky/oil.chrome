@@ -40,7 +40,8 @@ Chrome only gets the extension through the manual steps above.
 
 The `/t11 ` anchors are hidden behind favicons/glyphs. A line's **position** decides what it is: an entry under a window
 is a tab, under a group a tab, under a bookmark folder a bookmark; a line ending in `/` is a window, group or folder
-depending on where it sits.
+depending on where it sits. A window, group or folder line that keeps its anchor stays one when the `/` is deleted
+(unless it ends in a URL), so `cc` followed by a new name renames a group or folder; window names stay ignored.
 An anchor whose kind does not match the position creates a new entity of that position (a tab line moved under a
 bookmark folder becomes a bookmark and the tab closes; yank it first and the tab stays).
 
