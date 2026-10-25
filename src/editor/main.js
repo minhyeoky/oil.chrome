@@ -8,7 +8,7 @@ import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldCode } 
 import { EditorSelection, EditorState, Prec } from '@codemirror/state';
 import { EditorView, drawSelection, highlightActiveLine, keymap, runScopeHandlers } from '@codemirror/view';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
-import { apply, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
+import { apply, folderKeyTest, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
 import { anchorExtensions, anchorSpan } from './anchors.js';
 import { showConfirm, showHelp, showNotice } from './confirm.js';
 import { marksExtensions, pokeStatus } from './marks.js';
@@ -94,7 +94,7 @@ const extensions = [
   indentUnit.of('  '),
   EditorView.contentAttributes.of({ spellcheck: 'false', autocorrect: 'off', autocapitalize: 'off', 'aria-label': 'oil.chrome outline' }),
   oilTheme,
-  ...anchorExtensions(),
+  ...anchorExtensions(ctx),
   ...marksExtensions(ctx),
   // the buffer became clean again (undo) while Chrome had changed: catch up
   EditorView.updateListener.of((u) => { if (u.docChanged && app.stale && !isDirty()) onChromeEvent(); }),
@@ -117,7 +117,23 @@ const cursorKey = () => {
   return a ? `${a.kind}${a.id}` : null;
 };
 
-/** (Re)read Chrome, render, and replace the whole editor state (undo history reset; vim registers and folds persist). */
+/**
+ * Start vim's jump list over after the editor state was replaced. The list is global, and its marks hold offsets into the
+ * old document: one past the end of the new document makes the next jump motion (`gg` `G` `n`) throw and its key land
+ * in the buffer. A mark without an offset counts as deleted, but a deleted newest entry keeps the next jump from
+ * recording where it started (`''` `<C-o>`), so the list's 100 entries are filled with the cursor again.
+ */
+function restartJumps(before) {
+  if (before) for (const m of Object.values(before.marks || {})) m.offset = null;
+  const cm = getCM(app.view);
+  const jumps = Vim.getVimGlobalState_().jumpList;
+  if (cm && jumps) for (let i = 0; i < 100; i++) jumps.add(cm, cm.getCursor(), cm.getCursor());
+}
+
+/**
+ * (Re)read Chrome, render, and replace the whole editor state: the undo history and vim's state for the buffer (marks,
+ * `gv`, `.`, jumps) start over; vim registers, the last search and folds persist.
+ */
 async function load({ keepCursor = false } = {}) {
   const snapshot = await readSnap();
   const { text, lines } = render(snapshot);
@@ -138,7 +154,9 @@ async function load({ keepCursor = false } = {}) {
   const state = EditorState.create({ doc, selection: EditorSelection.cursor(pos), extensions });
   app.doc = state.doc;
   const folded = foldedAnchors();
+  const vimBefore = getCM(app.view);
   app.view.setState(state);
+  restartJumps(vimBefore);
   refold(folded);
   if (keepCursor) {
     app.view.scrollDOM.scrollTop = scrollTop;
@@ -263,7 +281,7 @@ async function activate() {
   const { state } = app.view;
   const line = state.doc.lineAt(state.selection.main.head);
   const a = anchorSpan(line.text);
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(app.ix) });
   if (!a || !p) { flash('nothing to open on this line'); return; }
   const finish = (msg) => {
     if (isDirty()) flash(`${msg} — buffer modified, the editor stays open`);
@@ -305,7 +323,7 @@ async function activate() {
 function foldRangeAt(lineNumber) {
   const { state } = app.view;
   const line = state.doc.line(lineNumber);
-  const p = parseLine(line.text);
+  const p = parseLine(line.text, { isFolderKey: folderKeyTest(app.ix) });
   if (!p || p.type !== 'folder') return null;
   let end = lineNumber;
   for (let n = lineNumber + 1; n <= state.doc.lines; n++) {

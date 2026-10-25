@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { apply } from '../../src/core/apply.js';
 import { plan } from '../../src/core/plan.js';
 import { render } from '../../src/core/render.js';
-import { S, EXAMPLE, block, del, delBlock, insertAfter, lineOf, moveLine, replaceLine } from './fixtures.js';
+import { S, EXAMPLE, baseSnapshot, block, del, delBlock, insertAfter, lineOf, moveLine, replaceLine } from './fixtures.js';
 
 /** A fake `chrome` namespace: every method resolves quietly; `failOn` makes named methods throw. */
 function fakeApi({ failOn = [] } = {}) {
@@ -102,6 +102,48 @@ test('a folder that gained a bookmark after the plan is not removed (removeTree 
   assert.ok(report.errors.some((e) => /added outside \(Added meanwhile\)/.test(e.message)));
   assert.ok(!api.calls.includes('bookmarks.removeTree'));
   assert.equal(api.store.journal, undefined, 'nothing journaled for a deletion that did not happen');
+});
+
+test('a bookmark moved out of a deleted folder outside is removed by its own call, not by removeTree', async () => {
+  const F = baseSnapshot();
+  const [github] = F.bookmarks[0].children[0].children.splice(0, 1);
+  F.bookmarks[0].children[1].children.push(github); // GitHub: Dev → Read later, while the editor was open
+  const p = plan(S, F, delBlock(EXAMPLE, 'b10')); // the Dev block still holds GitHub's line
+  assert.deepEqual(p.errors, []);
+  const api = fakeApi();
+  const removed = [];
+  api.bookmarks.removeTree = async (id) => { removed.push(`tree ${id}`); };
+  api.bookmarks.remove = async (id) => { removed.push(`one ${id}`); };
+  const report = await apply(api, p);
+  assert.deepEqual(report.errors, []);
+  assert.deepEqual(removed, ['tree 10', 'one 11']);
+  assert.deepEqual(api.store.journal[0].bookmarks.map((n) => n.id), ['10', '11'], 'both are journaled before they go');
+});
+
+test('a bookmark moved into a deleted folder outside, its line gone, is expected by the re-check before removeTree', async () => {
+  const F = baseSnapshot();
+  F.bookmarks[1].children = []; // Wikipedia: Other bookmarks → Dev
+  F.bookmarks[0].children[0].children.push({ id: '20', title: 'Wikipedia', url: 'https://www.wikipedia.org/' });
+  const p = plan(S, F, del(delBlock(EXAMPLE, 'b10'), 'b20'));
+  assert.deepEqual(p.errors, []);
+  const api = fakeApi();
+  api.bookmarks.getSubTree = async (id) => [{ id, title: 'Dev', children: ['11', '12', '20'].map((c) => ({ id: c, title: `bm ${c}`, url: `https://${c}.test/` })) }];
+  const report = await apply(api, p);
+  assert.equal(report.skippedDeletes, false);
+  assert.deepEqual(report.errors, []);
+  assert.ok(api.calls.includes('bookmarks.removeTree'));
+});
+
+test('a kept bookmark that re-enters the deleted folder after placement is not removed with it', async () => {
+  const p = plan(S, S, del(EXAMPLE, 'b10')); // only the Dev line goes: GitHub and MDN move up to the bar
+  assert.deepEqual(p.actions.find((a) => a.kind === 'delete-folder').known, ['b10']);
+  const api = fakeApi();
+  // GitHub was moved back into Dev after the placement, before the check
+  api.bookmarks.getSubTree = async (id) => [{ id, title: 'Dev', children: [{ id: '11', title: 'GitHub', url: 'https://github.com/' }] }];
+  const report = await apply(api, p);
+  assert.equal(report.skippedDeletes, true);
+  assert.ok(report.errors.some((e) => /added outside \(GitHub\)/.test(e.message)));
+  assert.ok(!api.calls.includes('bookmarks.removeTree'));
 });
 
 // ── a stateful stand-in for windows, tabs and groups ────────────────────────

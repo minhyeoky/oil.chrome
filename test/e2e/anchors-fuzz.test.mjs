@@ -1,7 +1,7 @@
 // Random vim key sequences typed into the real editor. Whatever the keys do to the text, the anchor invariants hold:
 //   · an anchor at a line start is always one that existed before, byte for byte (no edited or invented ids);
 //   · the cursor never rests inside [line start, anchor end) of an anchored line;
-//   · plan() keeps working on the buffer, and the page raises no errors.
+//   · plan() keeps working on the buffer, and the page raises or logs no errors.
 // ANCHOR_FUZZ_N (default 350) operations; ANCHOR_FUZZ_SEED replays a seed.
 
 import assert from 'node:assert/strict';
@@ -53,6 +53,7 @@ test(`anchor invariants survive ${N} random vim operations`, async () => {
   const [page] = await Promise.all([h.context.waitForEvent('page'), h.call(() => oilOpenEditor())]);
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); }); // CodeMirror logs what a key handler throws
   await page.waitForSelector('.cm-content');
   await page.waitForFunction(() => window.oil && window.oil.app.snapshot);
   await page.locator('.cm-content').focus();
@@ -81,6 +82,7 @@ test(`anchor invariants survive ${N} random vim operations`, async () => {
     const v = violations(s.text, s.head);
     for (const a of v.seen) if (!original.has(a)) v.out.push(`unknown anchor appeared: ${a}`);
     if (typeof s.plan !== 'number') v.out.push(`plan() failed: ${s.plan}`);
+    for (const e of errors.splice(0)) v.out.push(`page error: ${e}`);
     if (v.out.length) assert.fail(`after op #${i}: ${v.out.join('; ')}\nlast ops: ${trail.slice(-8).join('  ')}\n${s.text}`);
   }
   assert.deepEqual(errors, []);

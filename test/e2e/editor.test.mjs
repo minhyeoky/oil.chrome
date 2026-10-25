@@ -13,7 +13,7 @@ before(async () => { h = await launch({ name: 'editor' }); });
 after(async () => { await h.close(); });
 afterEach(async () => {
   if (page && !page.isClosed()) await page.close(); // a failed test can leave its editor open, and the next one would only focus it
-  assert.deepEqual(pageErrors, [], 'no uncaught errors in the editor page');
+  assert.deepEqual(pageErrors, [], 'no uncaught or logged errors in the editor page');
 });
 
 const BM = STANDARD.bookmarks;
@@ -24,6 +24,7 @@ async function openEditor() {
   const [p] = await Promise.all([h.context.waitForEvent('page'), h.call(() => oilOpenEditor())]);
   page = p;
   page.on('pageerror', (e) => pageErrors.push(e.message));
+  page.on('console', (m) => { if (m.type() === 'error') pageErrors.push(m.text()); }); // CodeMirror logs what a key handler throws
   await page.waitForSelector('.cm-content');
   await page.waitForFunction(() => window.oil && window.oil.app.snapshot);
   await page.locator('.cm-content').focus();
@@ -204,6 +205,95 @@ test('cc + text also keeps the identity (the hidden anchor survives the line cha
   const after = await ids();
   assert.equal(after.bookmarks.Docs, before.bookmarks.MDN, 'same bookmark id');
   assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['GitHub', 'github'], ['Docs', 'mdn']] });
+  await closeEditor();
+});
+
+test('cc on a folder line and a name without the `/` renames the folder in place: same folder, children stay', async () => {
+  await seedAndOpen();
+  const folderId = (title) => h.call(async ({ title }) => (await chrome.bookmarks.search({ title }))[0].id, { title });
+  const dev = await folderId('Dev');
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  assert.match(await text(), /^ {2}\/b\d+ Tools$/m);
+  await write();
+  assert.equal(await folderId('Tools'), dev, 'same folder id');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Tools', children: [['GitHub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('cc on a group line and a title with a ` [color]` suffix but no `/`: drawn as name and color, written as a rename', async () => {
+  await seedAndOpen();
+  await goto('Research');
+  await keys('cc');
+  await keys('Papers [red]');
+  await press('Escape');
+  const line = page.locator('.cm-line.oil-r-group');
+  assert.equal((await line.locator('.oil-name').innerText()).trim(), 'Papers');
+  assert.equal((await line.locator('.oil-gcolor').innerText()).trim(), '[red]');
+  assert.equal(await line.locator('.oil-slash').count(), 0, 'no `/` was typed, none is drawn');
+  await write();
+  assert.deepEqual((await state()).windows[0], ['neovim', 'oil', { group: 'Papers', color: 'red', tabs: ['attention', 'gpt3'] }, 'hn']);
+  await closeEditor();
+});
+
+test('o under a group line whose `/` is gone starts a member one level in', async () => {
+  await seedAndOpen();
+  await goto('Research');
+  await keys('cc');
+  await keys('Reading');
+  await press('Escape');
+  await keys('o');
+  await keys(h.url('fresh'));
+  await press('Escape');
+  assert.match(await text(), /^ {4}http:\/\/127\.0\.0\.1:\d+\/p\/fresh$/m);
+  await write();
+  assert.deepEqual((await state()).windows[0], ['neovim', 'oil', { group: 'Reading', color: 'blue', tabs: ['fresh', 'attention', 'gpt3'] }, 'hn']);
+  await closeEditor();
+});
+
+test('a bookmark folder line without its `/` is still read as a folder: glyph, color, count, <CR> folds, o starts a member', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  const line = page.locator('.cm-line', { hasText: 'Tools' });
+  assert.match(await line.getAttribute('class'), /oil-r-bfolder/, 'syntax role');
+  assert.match(await line.locator('.oil-anchor').getAttribute('class'), /oil-a-folder/, 'glyph');
+  assert.match(await line.locator('.oil-marks').innerText(), /^· 2/, 'bookmark count');
+  await press('Enter'); // a folder line: toggle its fold (a bookmark would open, and this one has no URL)
+  await sleep(100);
+  assert.equal(await page.locator('.oil-fold').count(), 1);
+  await press('Enter');
+  await sleep(100);
+  assert.equal(await page.locator('.oil-fold').count(), 0);
+  await keys('o');
+  await keys(h.url('fresh'));
+  await press('Escape');
+  assert.match(await text(), /^ {4}http:\/\/127\.0\.0\.1:\d+\/p\/fresh$/m, 'one level in: a member of Tools');
+  await write();
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Tools', children: [['', 'fresh'], ['GitHub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('za folds the children of a folder line without its `/`; zM folds a bookmark root written without it', async () => {
+  await seedAndOpen();
+  await goto('Dev');
+  await keys('cc');
+  await keys('Tools');
+  await press('Escape');
+  await keys('za');
+  assert.equal(await page.locator('.oil-fold').count(), 1);
+  assert.equal((await page.locator('.oil-fold').innerText()).trim(), '⋯ 2', 'its own two bookmarks, not the bar around it');
+  await keys('zR');
+  await goto('Other'); // the root "Other Bookmarks"
+  await keys('cc');
+  await keys('Others');
+  await press('Escape');
+  await keys('zM');
+  assert.equal(await page.locator('.oil-fold').count(), 4, 'both windows, the bar and Others');
   await closeEditor();
 });
 
@@ -710,6 +800,41 @@ test(':e! reloads, :e refuses while modified, :q refuses while modified', async 
   await keys(':e!'); await press('Enter');
   await page.waitForFunction(() => !window.oil.isDirty());
   assert.match(await text(), /Hn http/);
+  await closeEditor();
+});
+
+test('gg G / and the jumps back work after :e! made the buffer shorter than a recorded jump', async () => {
+  await seedAndOpen();
+  const line = () => page.evaluate(() => { const v = window.oil.view; return v.state.doc.lineAt(v.state.selection.main.head).text; });
+  const shrink = async () => {
+    await keys('yy9pG'); // a jump to the end of a longer buffer
+    await keys(':e!'); await press('Enter');
+    await page.waitForFunction(() => !window.oil.isDirty());
+    await idle();
+  };
+  await shrink();
+  await keys('kkk');
+  let start = await line();
+  await keys('gg');
+  assert.match(await line(), /^\/w\d+ /, 'gg goes to the first line');
+  await keys("''");
+  assert.equal(await line(), start, "'' goes back to where gg started");
+  await keys('G');
+  assert.match(await line(), /Wikipedia http/, 'G goes to the last line');
+  await press('Control+o');
+  assert.equal(await line(), start, '<C-o> goes back to where G started');
+  await shrink();
+  const reloaded = await line();
+  await press('Control+o');
+  assert.equal(await line(), reloaded, '<C-o> right after the reload has nothing older to go back to');
+  await keys('kkk');
+  start = await line();
+  await keys('gg');
+  await keys("''");
+  assert.equal(await line(), start, "… and the next jump still records where it started");
+  await goto('GitHub');
+  assert.match(await line(), /GitHub http/, '/ finds the line');
+  assert.equal(await page.evaluate(() => window.oil.isDirty()), false, 'no key landed in the buffer');
   await closeEditor();
 });
 
