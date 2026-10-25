@@ -367,6 +367,30 @@ function wireVim() {
   Vim.mapCommand('zo', 'action', 'oilFoldOpen', {}, normal);
   Vim.mapCommand('zR', 'action', 'oilFoldOpenAll', {}, normal);
   Vim.mapCommand('zM', 'action', 'oilFoldCloseAll', {}, normal);
+
+  // A linewise change keeps the anchor of its first line: lines 2..n go as with `dd`, then line 1 changes as with `cc`.
+  // `<C-v>R` `<C-v>S` arrive linewise (exitVisualBlock); charwise `c`, `<C-v>c` `<C-v>C` `<C-v>s` stay the package's.
+  // `this` is the package's operator table.
+  Vim.defineOperator('oilChange', function oilChange(cm, args, ranges, ...rest) {
+    const vim = cm.state.vim;
+    if (!args.linewise || vim.visualBlock) return this.change(cm, args, ranges, ...rest);
+    if (vim.visualMode) Vim.exitVisualMode(cm, false);
+    const { anchor, head } = ranges[0];
+    const last = Math.min(head.line - 1, cm.lastLine());
+    if (last <= anchor.line) return this.change(cm, args, ranges, ...rest);
+    const text = cm.getRange(anchor, head);
+    cm.replaceRange('', { line: anchor.line, ch: Infinity }, { line: last, ch: Infinity });
+    Vim.getRegisterController().pushText(args.registerName, 'change', text, true, false);
+    const first = [{ anchor, head: { line: anchor.line + 1, ch: 0 } }];
+    return this.change(cm, { ...args, registerName: '_' }, first, ...rest);
+  });
+  Vim.mapCommand('c', 'operator', 'oilChange', {}, {});
+  const visual = { context: 'visual' };
+  Vim.mapCommand('s', 'operator', 'oilChange', {}, visual);
+  Vim.mapCommand('C', 'operator', 'oilChange', { linewise: true }, visual);
+  const lines = { ...visual, exitVisualBlock: true };
+  Vim.mapCommand('R', 'operator', 'oilChange', { linewise: true }, lines);
+  Vim.mapCommand('S', 'operator', 'oilChange', { linewise: true }, lines);
 }
 
 // ── boot ────────────────────────────────────────────────────────────────────

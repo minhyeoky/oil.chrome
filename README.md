@@ -67,7 +67,7 @@ Preview marks at the end of a line show what `:w` would do: `+ new` `⧉ copy` `
 | `za` `zc` `zo` `zR` `zM` | folds |
 | `g?` | help |
 | `Tab` `Shift-Tab` | indent / dedent the line (changes its parent), also in insert mode |
-| `dd` `yy` `p` `P` `]p` `>>` `<<` `cc` `cw` `S` `o` … | plain vim; `cc` `S` `C` `D` `x` change the content and keep the identity — only `dd` removes a line |
+| `dd` `yy` `p` `P` `]p` `>>` `<<` `cc` `cw` `S` `o` … | plain vim; `cc` `S` `C` `D` `x` `Vc` change the content and keep the identity — only `dd` removes a line |
 
 Chrome changes while the editor is open are followed live as long as the buffer is untouched; otherwise the status line
 says `⟳ chrome changed — :e! to reload`.

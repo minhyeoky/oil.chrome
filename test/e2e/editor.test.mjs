@@ -56,6 +56,20 @@ async function write(answer = 'y') {
   assert.equal(await page.locator('.oil-modal').count(), 0, 'no "applied with problems" notice');
 }
 async function seedAndOpen(spec = STANDARD) { await h.seed(spec); await openEditor(); }
+/** Change one line per case with its keys and type a marker: no anchor may be dropped, added or moved, the marker sits behind its own. */
+async function changeEachLine(cases) {
+  const anchors = (t) => t.split('\n').map((l) => (/^\s*\/[wgtb]\d+ /.exec(l) || [null])[0]);
+  const before = anchors(await text());
+  for (const [title, op] of cases) {
+    await goto(title);
+    await keys(op);
+    await keys(`x${op}`);
+    await press('Escape');
+  }
+  const after = await text();
+  assert.deepEqual(anchors(after), before, 'no anchor was dropped, added or moved');
+  for (const [, op] of cases) assert.match(after, new RegExp(`^\\s*/[wgtb]\\d+ x${op}$`, 'm'), `${op}: the text sits behind the anchor of its own line`);
+}
 /** folded blocks (placeholders in the DOM) and the text that is still on screen */
 const folds = async () => ({ count: await page.locator('.oil-fold').count(), shown: await page.locator('.cm-content').innerText() });
 const externalTab = (name) => h.call(async ({ url }) => {
@@ -366,6 +380,199 @@ test('visual-line delete over several lines removes them with their anchors', as
   await keys('Vjd');
   await write();
   assert.deepEqual((await state()).windows, [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn']]);
+  await closeEditor();
+});
+
+test('Vc on a tab line + a new URL: :w navigates that tab (no tab opened or closed)', async () => {
+  await seedAndOpen();
+  const tabIds = () => h.call(async () => (await chrome.tabs.query({})).map((t) => t.id).sort((a, b) => a - b));
+  const before = { ids: await ids(), tabs: await tabIds() };
+  await goto('Oil');
+  await keys('Vc');
+  await keys(`Oil ${h.url('oil2')}`);
+  await press('Escape');
+  assert.match(await text(), /^ {2}\/t\d+ Oil http:\/\/127\.0\.0\.1:\d+\/p\/oil2$/m, 'the tab line kept its anchor');
+  assert.match(await text(), /^ {2}\/t\d+ Hn http/m, 'the next line is untouched');
+  await write();
+  assert.deepEqual((await state()).windows[0], ['neovim', 'oil2', RESEARCH('attention', 'gpt3'), 'hn']);
+  assert.equal((await ids()).tabs.oil2, before.ids.tabs.oil, 'same tab id');
+  assert.deepEqual(await tabIds(), before.tabs, 'no tab opened or closed');
+  await closeEditor();
+});
+
+test('Vc on a bookmark line + text renames that bookmark; the next line is untouched', async () => {
+  await seedAndOpen();
+  const before = await ids();
+  await goto('GitHub');
+  await keys('Vc');
+  await keys(`Hub ${h.url('github')}`);
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Hub http.*\n {4}\/b\d+ MDN http/m);
+  await write();
+  const after = await ids();
+  assert.equal(after.bookmarks.Hub, before.bookmarks.GitHub, 'same bookmark id');
+  assert.equal(after.bookmarks.MDN, before.bookmarks.MDN, 'the next bookmark is the same one');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['Hub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('Vjc over two bookmark lines renames the first and deletes the second', async () => {
+  await seedAndOpen();
+  const before = await ids();
+  await goto('GitHub');
+  await keys('Vjc');
+  await keys(`Hub ${h.url('github')}`);
+  await press('Escape');
+  await write();
+  const after = await ids();
+  assert.equal(after.bookmarks.Hub, before.bookmarks.GitHub, 'the first bookmark kept its identity');
+  assert.equal(after.bookmarks.MDN, undefined, 'the second one is gone');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['Hub', 'github']] });
+  await closeEditor();
+});
+
+test('VjR and <C-v>jR change the first line like cc and delete the others', async () => {
+  for (const block of [false, true]) {
+    await seedAndOpen();
+    const before = await ids();
+    await goto('GitHub');
+    if (block) await press('Control+v'); else await keys('V');
+    await keys('jR');
+    await keys(`Hub ${h.url('github')}`);
+    await press('Escape');
+    await write();
+    const after = await ids();
+    assert.equal(after.bookmarks.Hub, before.bookmarks.GitHub, 'the first bookmark kept its identity');
+    assert.equal(after.bookmarks.MDN, undefined, 'the second one is gone');
+    assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['Hub', 'github']] });
+    await closeEditor();
+  }
+});
+
+test('Vs VC vC vS VS change a line like Vc: it keeps its anchor and insert mode takes the typed text', async () => {
+  await seedAndOpen();
+  await changeEachLine([['GitHub', 'Vs'], ['MDN', 'VC'], ['Wikipedia', 'vC'], ['Hn', 'vS'], ['Codemirror', 'VS']]);
+  await closeEditor();
+});
+
+test('guard: VR and vR on one line kept the anchor before too', async () => {
+  await seedAndOpen();
+  await changeEachLine([['GitHub', 'VR'], ['Hn', 'vR']]);
+  await closeEditor();
+});
+
+test('Vjc on a window line keeps that window: the tab below goes, nothing is opened or moved', async () => {
+  await seedAndOpen();
+  const windowIds = () => h.call(async () => (await chrome.windows.getAll()).filter((w) => w.type === 'normal').map((w) => w.id).sort((a, b) => a - b));
+  const before = { windows: await windowIds(), ids: await ids() };
+  await goto('Window 2');
+  await keys('Vjc');
+  await keys('Window 2/');
+  await press('Escape');
+  assert.match(await text(), /^\/w\d+ Window 2\/$/m, 'the window line kept its anchor');
+  await write();
+  assert.deepEqual((await state()).windows, [['neovim', 'oil', RESEARCH('attention', 'gpt3'), 'hn'], ['codemirror']]);
+  assert.deepEqual(await windowIds(), before.windows, 'no window opened or closed');
+  assert.equal((await ids()).tabs.codemirror, before.ids.tabs.codemirror, 'the tab below was not moved');
+  await closeEditor();
+});
+
+test('cj and ck over a window line keep its anchor too (the plan only closes the tab)', async () => {
+  await seedAndOpen();
+  const kinds = () => page.evaluate(() => window.oil.plan().actions.map((a) => a.kind));
+  await goto('Window 2');
+  await keys('cj');
+  await keys('Window 2/');
+  await press('Escape');
+  assert.match(await text(), /^\/w\d+ Window 2\/$/m, 'cj');
+  assert.deepEqual(await kinds(), ['close-tab']);
+  await keys(':e!'); await press('Enter');
+  await page.waitForFunction(() => !window.oil.isDirty());
+  await idle();
+  await goto('Tmux');
+  await keys('ck');
+  await keys('Window 2/');
+  await press('Escape');
+  assert.match(await text(), /^\/w\d+ Window 2\/$/m, 'ck');
+  assert.deepEqual(await kinds(), ['close-tab']);
+  await closeEditor();
+});
+
+test('. repeats Vc on the next line; both bookmarks keep their identity', async () => {
+  await seedAndOpen();
+  const bookmarkIds = () => h.call(async () => {
+    const out = [];
+    const walk = (n) => { if (n.url) out.push(n.id); (n.children || []).forEach(walk); };
+    walk((await chrome.bookmarks.getTree())[0]);
+    return out;
+  });
+  const before = await bookmarkIds();
+  await goto('GitHub');
+  await keys('Vc');
+  await keys('Hub');
+  await press('Escape');
+  await keys('j.');
+  assert.match(await text(), /^ {4}\/b\d+ Hub\n {4}\/b\d+ Hub$/m);
+  await write();
+  assert.deepEqual(await bookmarkIds(), before, 'no bookmark created or deleted');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['Hub', 'github'], ['Hub', 'mdn']] });
+  await closeEditor();
+});
+
+test('guard: Vjc is one undo step and leaves both lines in the register', async () => {
+  await seedAndOpen();
+  const original = await text();
+  await goto('GitHub');
+  await keys('Vjc');
+  await keys('Hub');
+  await press('Escape');
+  await keys('uu'); // the typed text, then the change
+  assert.equal(await text(), original);
+  await goto('GitHub');
+  await keys('Vjc');
+  await press('Escape');
+  await keys('Gp');
+  const tail = (await text()).split('\n').slice(-2);
+  assert.match(tail[0], /^ {4}\/b\d+ GitHub http/);
+  assert.match(tail[1], /^ {4}\/b\d+ MDN http/);
+  await closeEditor();
+});
+
+test('guard: charwise vec still changes only the selected word (the rest of the line and the identity stay)', async () => {
+  await seedAndOpen();
+  const before = await ids();
+  await goto('GitHub');
+  await keys('vec');
+  await keys('Hub');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Hub http/m);
+  await write();
+  assert.equal((await ids()).bookmarks.Hub, before.bookmarks.GitHub, 'same bookmark id');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['Hub', 'github'], ['MDN', 'mdn']] });
+  await closeEditor();
+});
+
+// The patterns also match the whole-block result (XitHub / XDN) that a fix of the known defect would give.
+test('guard: blockwise <C-v>jc and <C-v>jC stay blockwise (a known defect limits them to one range)', async () => {
+  await seedAndOpen();
+  await goto('GitHub');
+  await press('Control+v');
+  await keys('jc');
+  await keys('X');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ X\w*itHub http.*\/github$/m, 'only the block column changes, the URL stays');
+  assert.match(await text(), /^ {4}\/b\d+ X?DN http.*\/mdn$/m);
+  await keys(':e!'); await press('Enter');
+  await page.waitForFunction(() => !window.oil.isDirty());
+  await idle();
+  await goto('GitHub');
+  await keys('lll');
+  await press('Control+v');
+  await keys('jC');
+  await keys('X');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GitHX/m, 'the first line is not rewritten as a whole');
+  assert.match(await text(), /^ {4}\/b\d+ MDN/m);
   await closeEditor();
 });
 

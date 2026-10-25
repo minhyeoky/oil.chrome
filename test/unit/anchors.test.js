@@ -49,6 +49,26 @@ test('cc / S (replace the line text, keep the break) keeps indent and anchor', (
   assert.equal(out.doc.line(3).text, '  /t12 ');
 });
 
+// A linewise change of several lines reaches the filter as two changes: `dd` of lines 2..n (from the end of line 1),
+// then `cc` on line 1.
+const changeLines = (st, first, last) => {
+  const dd = apply(st, { changes: { from: st.doc.line(first).to, to: st.doc.line(last).to } });
+  const line = dd.doc.line(first);
+  return apply(dd, { changes: { from: line.from + /^[ \t]*/.exec(line.text)[0].length, to: line.to } });
+};
+
+test('guard: dd of lines 2..n, then cc on line 1, keeps the first anchor at any indent', () => {
+  const st = mk();
+  const top = changeLines(st, 1, 3); // line 1 is at indent 0
+  assert.equal(top.doc.line(1).text, '/w1 ');
+  assert.equal(top.doc.line(2).text, '    /t13 deep https://deep.test/');
+  const nested = changeLines(st, 2, 3);
+  assert.equal(nested.doc.line(2).text, '  /t11 ');
+  assert.equal(nested.doc.line(3).text, '    /t13 deep https://deep.test/');
+  const end = changeLines(mk('/b1 Bar/\n  /b2 x\n  /b3 y'), 1, 3); // down to the end of the document
+  assert.equal(end.doc.toString(), '/b1 ');
+});
+
 test('cc then typing: insert after the anchor works', () => {
   let st = mk();
   const l = st.doc.line(3);

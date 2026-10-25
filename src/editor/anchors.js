@@ -4,7 +4,7 @@
 // (favicon or glyph) that is atomic, and a transaction filter keeps the text itself safe:
 //   · only a deletion that removes the whole line (its line break included — `dd`) may delete an anchor;
 //     any other deletion touching an anchor is carved around it, so `cc` `S` `C` `D` `x` change the content and
-//     keep the identity;
+//     keep the identity (visual-line `c` arrives as a `dd`: main.js sends it as `cc`, after a `dd` of the other lines);
 //   · an insertion inside or in front of an anchor (non-blank text) lands behind it; blank text in front of the
 //     anchor (`>>`, a blank line above) and whole lines put above (`P`) are untouched;
 //   · Enter right behind an anchor, before the first character of the content, breaks the line above the anchor
