@@ -57,9 +57,10 @@ async function write(answer = 'y') {
   assert.equal(await page.locator('.oil-modal').count(), 0, 'no "applied with problems" notice');
 }
 async function seedAndOpen(spec = STANDARD) { await h.seed(spec); await openEditor(); }
+/** the anchor at the start of each line (null for a line without one) */
+const anchors = (t) => t.split('\n').map((l) => (/^\s*\/[wgtb]\d+ /.exec(l) || [null])[0]);
 /** Change one line per case with its keys and type a marker: no anchor may be dropped, added or moved, the marker sits behind its own. */
 async function changeEachLine(cases) {
-  const anchors = (t) => t.split('\n').map((l) => (/^\s*\/[wgtb]\d+ /.exec(l) || [null])[0]);
   const before = anchors(await text());
   for (const [title, op] of cases) {
     await goto(title);
@@ -70,6 +71,19 @@ async function changeEachLine(cases) {
   const after = await text();
   assert.deepEqual(anchors(after), before, 'no anchor was dropped, added or moved');
   for (const [, op] of cases) assert.match(after, new RegExp(`^\\s*/[wgtb]\\d+ x${op}$`, 'm'), `${op}: the text sits behind the anchor of its own line`);
+}
+/** :e! and wait until the buffer is clean again */
+async function reload() {
+  await keys(':e!'); await press('Enter');
+  await page.waitForFunction(() => !window.oil.isDirty());
+  await idle();
+}
+/** a block from the H of GitHub down to MDN, `motion` to shape it, then `op`; tests expect what Neovim 0.11 makes of the same keys */
+async function block(motion, op) {
+  await goto('GitHub');
+  await keys('lll');
+  await press('Control+v');
+  await keys(`j${motion}${op}`);
 }
 /** folded blocks (placeholders in the DOM) and the text that is still on screen */
 const folds = async () => ({ count: await page.locator('.oil-fold').count(), shown: await page.locator('.cm-content').innerText() });
@@ -553,27 +567,188 @@ test('guard: charwise vec still changes only the selected word (the rest of the 
   await closeEditor();
 });
 
-// The patterns also match the whole-block result (XitHub / XDN) that a fix of the known defect would give.
-test('guard: blockwise <C-v>jc and <C-v>jC stay blockwise (a known defect limits them to one range)', async () => {
+test('blockwise <C-v>jc changes the block on every line; both bookmarks keep their identity', async () => {
   await seedAndOpen();
+  const before = await ids();
   await goto('GitHub');
   await press('Control+v');
   await keys('jc');
   await keys('X');
   await press('Escape');
-  assert.match(await text(), /^ {4}\/b\d+ X\w*itHub http.*\/github$/m, 'only the block column changes, the URL stays');
-  assert.match(await text(), /^ {4}\/b\d+ X?DN http.*\/mdn$/m);
-  await keys(':e!'); await press('Enter');
-  await page.waitForFunction(() => !window.oil.isDirty());
-  await idle();
-  await goto('GitHub');
-  await keys('lll');
-  await press('Control+v');
-  await keys('jC');
-  await keys('X');
+  assert.match(await text(), /^ {4}\/b\d+ XitHub http\S+\/github\n {4}\/b\d+ XDN http\S+\/mdn$/m);
+  await write();
+  const after = await ids();
+  assert.equal(after.bookmarks.XitHub, before.bookmarks.GitHub, 'GitHub kept its identity');
+  assert.equal(after.bookmarks.XDN, before.bookmarks.MDN, 'MDN kept its identity');
+  assert.deepEqual((await state()).bookmarks.bar[0], { folder: 'Dev', children: [['XitHub', 'github'], ['XDN', 'mdn']] });
+  await closeEditor();
+});
+
+test('blockwise C and D run from the block\'s left column to the line end, as in Vim', async () => {
+  await seedAndOpen();
+  await block('', 'CX');
   await press('Escape');
-  assert.match(await text(), /^ {4}\/b\d+ GitHX/m, 'the first line is not rewritten as a whole');
-  assert.match(await text(), /^ {4}\/b\d+ MDN/m);
+  assert.match(await text(), /^ {4}\/b\d+ GitX\n {4}\/b\d+ MDNX$/m, 'a one-column block');
+  await reload();
+  await block('h', 'CX');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GiX\n {4}\/b\d+ MDX$/m, 'a block drawn leftwards');
+  await reload();
+  await block('', 'D');
+  assert.match(await text(), /^ {4}\/b\d+ Git\n {4}\/b\d+ MDN$/m);
+  await goto('Wikipedia');
+  await keys('P');
+  assert.match(await text(), /^ {2}\/b\d+ Hub http\S+\/githubWikipedia http/m, 'the register is blockwise');
+  await closeEditor();
+});
+
+test('blockwise X deletes and Y yanks the block itself, as in Vim', async () => {
+  await seedAndOpen();
+  await block('', 'X');
+  assert.match(await text(), /^ {4}\/b\d+ Gitub http\S+\n {4}\/b\d+ MDNhttp/m);
+  await reload();
+  await block('', 'Y');
+  await goto('Wikipedia');
+  await keys('P');
+  assert.match(await text(), /^ {2}\/b\d+ HWikipedia http/m);
+  await closeEditor();
+});
+
+test('blockwise I A and $A insert on every line of the block', async () => {
+  await seedAndOpen();
+  await block('', 'IX');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GitXHub http\S+\n {4}\/b\d+ MDNX http/m);
+  await reload();
+  await block('', 'AX');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GitHXub http\S+\n {4}\/b\d+ MDN Xhttp/m);
+  await reload();
+  await block('$', 'AX');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GitHub http\S+\/githubX\n {4}\/b\d+ MDN http\S+\/mdnX$/m);
+  await closeEditor();
+});
+
+// Dev's children sit two columns deeper, so the column just behind Dev's anchor falls inside theirs.
+test('blockwise c over a deeper line\'s anchor leaves that anchor alone', async () => {
+  await seedAndOpen();
+  const before = anchors(await text());
+  await goto('Dev');
+  await keys('l');
+  const [dev, github] = (await text()).split('\n').filter((l) => /\/b\d+ (Dev\/|GitHub )/.test(l)).map((l) => /^\s*\/b\d+ /.exec(l)[0].length);
+  assert.ok(dev + 1 < github, 'the block column lies inside the deeper anchor');
+  await press('Control+v');
+  await keys('jcX');
+  await press('Escape');
+  assert.deepEqual(anchors(await text()), before, 'no anchor was dropped, added or moved');
+  assert.match(await text(), /^ {2}\/b\d+ DXv\/\n {4}\/b\d+ XGitHub http/m, 'the deeper line gets the text behind its anchor');
+  await closeEditor();
+});
+
+test('in a blockwise insert, Backspace Delete <C-w> <C-u> act on every line, and Enter breaks the main one only', async () => {
+  await seedAndOpen();
+  await block('', 'Iab');
+  await press('Backspace');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ GitaHub http\S+\/github\n {4}\/b\d+ MDNa http\S+\/mdn$/m, 'Backspace');
+  await reload();
+  await block('', 'I');
+  await press('Delete');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Gitub http\S+\n {4}\/b\d+ MDNhttp/m, 'Delete');
+  await reload();
+  await block('', 'Iab cd');
+  await press('Control+w');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Gitab Hub http\S+\n {4}\/b\d+ MDNab  http/m, '<C-w>');
+  await reload();
+  await goto('Wikipedia');
+  await keys('yiw');
+  await block('', 'Iab');
+  await press('Control+u');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Hub http\S+\n {4}\/b\d+  http/m, '<C-u>: to the line start, anchors kept');
+  await goto('Wikipedia');
+  await keys('P');
+  assert.match(await text(), /^ {2}\/b\d+ WikipediaWikipedia http/m, 'the deletions left the register alone');
+  await reload();
+  await block('', 'Ix');
+  await press('Enter');
+  await keys('y');
+  await press('Escape');
+  assert.match(await text(), /^ {4}\/b\d+ Gitx\nyHub http\S+\n {4}\/b\d+ MDNx http/m, 'Enter');
+  await closeEditor();
+});
+
+test('. replays the Backspace typed in insert mode, also after a blockwise insert', async () => {
+  await seedAndOpen();
+  await goto('GitHub');
+  await keys('iab');
+  await press('Backspace');
+  await press('Escape');
+  await keys('j.');
+  assert.match(await text(), /^ {4}\/b\d+ aGitHub http\S+\n {4}\/b\d+ aMDN http/m);
+  await reload();
+  await goto('Neovim');
+  await press('Control+v');
+  await keys('jIab');
+  await press('Backspace');
+  await press('Escape');
+  await goto('GitHub');
+  await keys('.');
+  assert.match(await text(), /^ {4}\/b\d+ aGitHub http\S+\n {4}\/b\d+ aMDN http/m);
+  await closeEditor();
+});
+
+test('blockwise I and c skip the lines that do not reach the block; A appends to them', async () => {
+  await seedAndOpen();
+  const hn = async (op) => { await goto('Hn'); await press('Control+v'); await keys(`jj${op}Z`); await press('Escape'); };
+  await hn('I');
+  assert.match(await text(), /^ {2}\/t\d+ ZHn http\S+\n\n\/w\d+ WiZndow 2\/$/m, 'I leaves the blank line alone');
+  await reload();
+  await hn('c');
+  assert.match(await text(), /^ {2}\/t\d+ Zn http\S+\n\n\/w\d+ WiZdow 2\/$/m, 'c leaves the blank line alone');
+  await reload();
+  await hn('A');
+  assert.match(await text(), /^ {2}\/t\d+ HZn http\S+\nZ\n\/w\d+ WinZdow 2\/$/m, 'A appends to it');
+  await closeEditor();
+});
+
+test('a block keeps its type in the unnamed, named and numbered registers; a $ block starts at the shorter end', async () => {
+  await seedAndOpen();
+  await block('l', '"aY');
+  await goto('Wikipedia');
+  await keys('p');
+  assert.match(await text(), /^ {2}\/b\d+ WHuikipedia http/m, '"aY, then p');
+  await reload();
+  await block('', 'D');
+  assert.equal(await page.evaluate(() => { const v = window.oil.view; const h = v.state.selection.main.head; return v.state.doc.lineAt(h).to - h; }), 1, 'the cursor rests on the last character');
+  await goto('Wikipedia');
+  await keys('"1P');
+  assert.match(await text(), /^ {2}\/b\d+ Hub http\S+\/githubWikipedia http/m, 'D, then "1P');
+  await reload();
+  const lines = (await text()).split('\n');
+  const mdn = lines.find((l) => /\/b\d+ MDN /.test(l));
+  const later = lines.find((l) => /\/b\d+ Read later\//.test(l));
+  await goto('MDN');
+  await keys('$');
+  await press('Control+v');
+  await keys('j$D');
+  assert.ok((await text()).includes(`${mdn.slice(0, later.length)}\n${later}\n`), 'a $ block ending on a shorter line starts at its end');
+  await closeEditor();
+});
+
+test('a click with Cmd or Ctrl does not add a cursor', async () => {
+  await seedAndOpen();
+  await goto('GitHub');
+  const box = await page.locator('.cm-line', { hasText: 'MDN' }).first().boundingBox();
+  for (const mod of ['Meta', 'Control']) {
+    await page.keyboard.down(mod);
+    await page.mouse.click(box.x + 80, box.y + box.height / 2);
+    await page.keyboard.up(mod);
+    assert.equal(await page.evaluate(() => window.oil.view.state.selection.ranges.length), 1, mod);
+  }
   await closeEditor();
 });
 

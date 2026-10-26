@@ -1,9 +1,12 @@
 // The editor window: CodeMirror 6 + vim over the outline text. Boots from live Chrome state, writes with :w.
 
-import { history, indentLess, indentMore } from '@codemirror/commands';
+import {
+  deleteCharBackward, deleteCharForward, deleteGroupBackward, deleteGroupForward, deleteLineBoundaryBackward,
+  deleteLineBoundaryForward, deleteToLineEnd, deleteToLineStart, history, indentLess, indentMore,
+} from '@codemirror/commands';
 import { foldAll, foldEffect, foldedRanges, indentUnit, unfoldAll, unfoldCode } from '@codemirror/language';
-import { EditorSelection, EditorState } from '@codemirror/state';
-import { EditorView, drawSelection, highlightActiveLine, keymap } from '@codemirror/view';
+import { EditorSelection, EditorState, Prec } from '@codemirror/state';
+import { EditorView, drawSelection, highlightActiveLine, keymap, runScopeHandlers } from '@codemirror/view';
 import { Vim, getCM, vim } from '@replit/codemirror-vim';
 import { apply, folderKeyTest, indexSnapshot, parseLine, plan, readSnapshot, render } from '../core/index.js';
 import { anchorExtensions, anchorSpan } from './anchors.js';
@@ -46,12 +49,45 @@ function flash(text, kind = 'info', ms = 5000) {
 const readSnap = () => readSnapshot(chrome, { editorUrl: EDITOR_URL, focusWindowId: app.focusWindowId });
 
 // ── state ───────────────────────────────────────────────────────────────────
+// In insert mode, deletions run CodeMirror's commands, also for <C-w> <C-u> (vim's own are unmapped in wireVim). They
+// act at every cursor of a blockwise insert, where the browser's own deletion changes the main line only and leaves the
+// other cursors in front of the wrong characters; they leave the registers alone, as in Vim; and vim's `.` replays
+// Backspace and Delete by looking them up in the editor's keymap.
+const inserting = (run) => (view) => !!getCM(view)?.state.vim?.insertMode && run(view);
+const insertModeDeletions = keymap.of([
+  { key: 'Backspace', run: inserting(deleteCharBackward), shift: inserting(deleteCharBackward) },
+  { key: 'Delete', run: inserting(deleteCharForward) },
+  { key: 'Mod-Backspace', mac: 'Alt-Backspace', run: inserting(deleteGroupBackward) },
+  { key: 'Mod-Delete', mac: 'Alt-Delete', run: inserting(deleteGroupForward) },
+  { mac: 'Mod-Backspace', run: inserting(deleteLineBoundaryBackward) },
+  { mac: 'Mod-Delete', run: inserting(deleteLineBoundaryForward) },
+  { mac: 'Ctrl-h', run: inserting(deleteCharBackward) },
+  { mac: 'Ctrl-k', run: inserting(deleteToLineEnd) },
+  { key: 'Ctrl-w', run: inserting(deleteGroupBackward) },
+  { key: 'Ctrl-u', run: inserting(deleteToLineStart) },
+]);
+// Enter breaks the main line only in a blockwise insert, as in Vim: with several cursors it is handled before vim
+const toMainCursor = (view) => { view.dispatch({ selection: EditorSelection.create([view.state.selection.main]) }); return false; };
+const blockInsertKeys = keymap.of([
+  { key: 'Enter', run: toMainCursor, shift: toMainCursor },
+].map((binding) => ({ ...binding, scope: 'oil-block-insert' })));
+const blockInsert = Prec.highest(EditorView.domEventHandlers({
+  keydown: (event, view) => view.state.selection.ranges.length > 1 && !!getCM(view)?.state.vim?.insertMode
+    && runScopeHandlers(view, event, 'oil-block-insert'),
+}));
+
 const extensions = [
   vim({ status: false }), // first: its keymap must win over everything below
   history(),
   // Tab must not leave the editor; in an outline it moves the line one level (the parent changes)
   keymap.of([{ key: 'Tab', run: indentMore, preventDefault: true }, { key: 'Shift-Tab', run: indentLess, preventDefault: true }]),
+  insertModeDeletions,
+  blockInsertKeys,
+  blockInsert,
   drawSelection(),
+  // blockwise visual mode (`<C-v>`) is one range per line; it stays the only way to get more than one
+  EditorState.allowMultipleSelections.of(true),
+  EditorView.clickAddsSelectionRange.of(() => false),
   highlightActiveLine(),
   EditorView.lineWrapping,
   EditorState.tabSize.of(2),
@@ -386,12 +422,43 @@ function wireVim() {
   Vim.mapCommand('zR', 'action', 'oilFoldOpenAll', {}, normal);
   Vim.mapCommand('zM', 'action', 'oilFoldCloseAll', {}, normal);
 
+  /** The block's left column and the one after its right edge (Infinity for a `$` block). */
+  const blockColumns = (cm) => {
+    const { anchor, head } = cm.state.vim.sel;
+    const headCh = head.ch === Infinity ? cm.getLine(head.line).length : head.ch;
+    return { left: Math.min(anchor.ch, headCh), right: head.ch === Infinity ? Infinity : Math.max(anchor.ch, head.ch) + 1 };
+  };
+  // Blockwise `C` `D` run from the block's left column to the line end and `X` `Y` take the block itself, as in Vim. The
+  // package runs all four to the line end, from its top corner's column, and one further unless that column is left of
+  // the bottom corner's. Returns the arguments and ranges for the package's operator.
+  const blockwise = (cm, args, ranges) => {
+    if (!cm.state.vim.visualBlock || !args.linewise) return [args, ranges];
+    const { left, right } = blockColumns(cm);
+    const to = args.toEol ? Infinity : right;
+    const block = ranges.map(({ anchor: { line } }) => ({ anchor: { line, ch: left }, head: { line, ch: to } }));
+    cm.setSelections(block);
+    return [{ ...args, linewise: false }, block];
+  };
+  // A blockwise insert (`I` `c` `C` `s`) types only into the lines that reach the block's left column, as in Vim. `A`
+  // appends to every line, at the end of a short one (Vim pads it with spaces first).
+  const reachingBlock = (cm, left) => {
+    const cursors = cm.listSelections();
+    const keep = cursors.filter((r) => cm.getLine(r.head.line).length >= left);
+    if (keep.length && keep.length < cursors.length) cm.setSelections(keep);
+  };
+
   // A linewise change keeps the anchor of its first line: lines 2..n go as with `dd`, then line 1 changes as with `cc`.
-  // `<C-v>R` `<C-v>S` arrive linewise (exitVisualBlock); charwise `c`, `<C-v>c` `<C-v>C` `<C-v>s` stay the package's.
+  // `<C-v>R` `<C-v>S` arrive linewise (exitVisualBlock); charwise `c`, `<C-v>c` `<C-v>s` stay the package's.
   // `this` is the package's operator table.
   Vim.defineOperator('oilChange', function oilChange(cm, args, ranges, ...rest) {
     const vim = cm.state.vim;
-    if (!args.linewise || vim.visualBlock) return this.change(cm, args, ranges, ...rest);
+    if (vim.visualBlock) {
+      const { left } = blockColumns(cm);
+      const result = this.change(cm, ...blockwise(cm, args, ranges), ...rest);
+      reachingBlock(cm, left);
+      return result;
+    }
+    if (!args.linewise) return this.change(cm, args, ranges, ...rest);
     if (vim.visualMode) Vim.exitVisualMode(cm, false);
     const { anchor, head } = ranges[0];
     const last = Math.min(head.line - 1, cm.lastLine());
@@ -402,10 +469,40 @@ function wireVim() {
     const first = [{ anchor, head: { line: anchor.line + 1, ch: 0 } }];
     return this.change(cm, { ...args, registerName: '_' }, first, ...rest);
   });
+  Vim.defineOperator('oilDelete', function oilDelete(cm, args, ranges, ...rest) {
+    const block = cm.state.vim.visualBlock;
+    const to = this.delete(cm, ...blockwise(cm, args, ranges), ...rest);
+    // back in normal mode the cursor rests on a character, not behind the line end the deletion may have left it at
+    return block && to ? { line: to.line, ch: Math.min(to.ch, Math.max(0, cm.getLine(to.line).length - 1)) } : to;
+  });
+  Vim.defineOperator('oilYank', function oilYank(cm, args, ranges, ...rest) {
+    return this.yank(cm, ...blockwise(cm, args, ranges), ...rest);
+  });
+  Vim.unmap('<C-w>', 'insert'); // CodeMirror's commands take them (insertModeDeletions)
+  Vim.unmap('<C-u>', 'insert');
+  Vim.defineAction('oilInsert', function oilInsert(cm, args, vim) {
+    const left = vim.visualBlock ? blockColumns(cm).left : null;
+    this.enterInsertMode(cm, args, vim);
+    if (left !== null) reachingBlock(cm, left);
+  });
+  // The package keeps a block's type in the register it was asked for only: the unnamed register, "1 and "- would
+  // paste a block as plain text, line breaks and all
+  const registers = Vim.getRegisterController();
+  const pushText = registers.pushText.bind(registers);
+  registers.pushText = (name, operator, text, linewise, blockwise) => {
+    pushText(name, operator, text, linewise, blockwise);
+    if (!blockwise || name === '_') return;
+    registers.unnamedRegister.blockwise = true;
+    if (!name && operator !== 'yank') registers.getRegister(text.includes('\n') ? '1' : '-').blockwise = true;
+  };
   Vim.mapCommand('c', 'operator', 'oilChange', {}, {});
   const visual = { context: 'visual' };
   Vim.mapCommand('s', 'operator', 'oilChange', {}, visual);
-  Vim.mapCommand('C', 'operator', 'oilChange', { linewise: true }, visual);
+  Vim.mapCommand('C', 'operator', 'oilChange', { linewise: true, toEol: true }, visual);
+  Vim.mapCommand('D', 'operator', 'oilDelete', { linewise: true, toEol: true }, visual);
+  Vim.mapCommand('X', 'operator', 'oilDelete', { linewise: true }, visual);
+  Vim.mapCommand('Y', 'operator', 'oilYank', { linewise: true }, visual);
+  Vim.mapCommand('I', 'action', 'oilInsert', { insertAt: 'startOfSelectedArea' }, { ...visual, isEdit: true });
   const lines = { ...visual, exitVisualBlock: true };
   Vim.mapCommand('R', 'operator', 'oilChange', { linewise: true }, lines);
   Vim.mapCommand('S', 'operator', 'oilChange', { linewise: true }, lines);
